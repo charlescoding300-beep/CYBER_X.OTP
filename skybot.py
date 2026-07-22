@@ -25,24 +25,23 @@ import asyncio
 import requests
 import os
 import sys
-import signal
 import traceback
 import logging
 from datetime import datetime
 from flask import Flask, request, jsonify
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Bot
-from telegram.error import BadRequest, Conflict
+from telegram.error import BadRequest
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 
 # ================================================================
-# 🔧 ENVIRONMENT VARIABLES — Set these on Render Dashboard
+# 🔧 ENVIRONMENT VARIABLES
 # ================================================================
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "8580418434"))
 
 # ================================================================
-# 📝 Logging — Helps debug issues on Render
+# 📝 Logging
 # ================================================================
 
 logging.basicConfig(
@@ -56,219 +55,228 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 # ================================================================
 
 def esc(t):
-    """Escape special Markdown characters in dynamic/user text."""
     if t is None:
         return ""
     return str(t).replace('_', '\\_').replace('*', '\\*').replace('`', '\\`').replace('[', '\\[')
 
 # ================================================================
-# 🌍 200+ COUNTRIES — EVERY COUNTRY IN THE WORLD
+# 🌍 200+ COUNTRIES — FIXED: Local number digits = sum of fmt tuple
+#  Most countries: (3,3,4) = 10 digits local (standard mobile length)
+#  NANPA (+1):     (3,3,4) = 10 digits
+#  India (+91):    (3,3,4) = 10 digits
+#  Nigeria (+234): (3,3,4) = 10 digits
+#  UK (+44):       (3,4,3) = 10 digits mobile (without leading 0)
 # ================================================================
 
 COUNTRIES = [
-    ("Algeria", "\U0001f1e9\U0001f1ff", "+213", (2, 3, 6, 11)),
-    ("Angola", "\U0001f1e6\U0001f1f4", "+244", (3, 3, 6, 12)),
-    ("Benin", "\U0001f1e7\U0001f1ef", "+229", (3, 3, 6, 12)),
-    ("Botswana", "\U0001f1e7\U0001f1fc", "+267", (3, 3, 6, 12)),
-    ("Burkina Faso", "\U0001f1e7\U0001f1eb", "+226", (3, 3, 6, 12)),
-    ("Burundi", "\U0001f1e7\U0001f1ee", "+257", (3, 3, 6, 12)),
-    ("Cabo Verde", "\U0001f1e8\U0001f1fb", "+238", (3, 3, 6, 12)),
-    ("Cameroon", "\U0001f1e8\U0001f1f2", "+237", (3, 3, 6, 12)),
-    ("Central African Rep.", "\U0001f1e8\U0001f1eb", "+236", (3, 3, 6, 12)),
-    ("Chad", "\U0001f1f9\U0001f1e9", "+235", (3, 3, 6, 12)),
-    ("Comoros", "\U0001f1f0\U0001f1f2", "+269", (3, 3, 6, 12)),
-    ("Congo", "\U0001f1e8\U0001f1ec", "+242", (3, 3, 6, 12)),
-    ("C\u00f4te d'Ivoire", "\U0001f1e8\U0001f1ee", "+225", (3, 3, 6, 12)),
-    ("DR Congo", "\U0001f1e8\U0001f1e9", "+243", (3, 3, 6, 12)),
-    ("Djibouti", "\U0001f1e9\U0001f1ef", "+253", (3, 3, 6, 12)),
-    ("Egypt", "\U0001f1ea\U0001f1ec", "+20", (2, 3, 7, 12)),
-    ("Equatorial Guinea", "\U0001f1ec\U0001f1f6", "+240", (3, 3, 6, 12)),
-    ("Eritrea", "\U0001f1ea\U0001f1f7", "+291", (3, 3, 6, 12)),
-    ("Ethiopia", "\U0001f1ea\U0001f1f9", "+251", (3, 3, 6, 12)),
-    ("Gabon", "\U0001f1ec\U0001f1e6", "+241", (3, 3, 6, 12)),
-    ("Gambia", "\U0001f1ec\U0001f1f2", "+220", (3, 3, 6, 12)),
-    ("Ghana", "\U0001f1ec\U0001f1ed", "+233", (3, 3, 6, 12)),
-    ("Guinea", "\U0001f1ec\U0001f1f3", "+224", (3, 3, 6, 12)),
-    ("Guinea-Bissau", "\U0001f1ec\U0001f1fc", "+245", (3, 3, 6, 12)),
-    ("Kenya", "\U0001f1f0\U0001f1ea", "+254", (3, 3, 6, 12)),
-    ("Lesotho", "\U0001f1f1\U0001f1f8", "+266", (3, 3, 6, 12)),
-    ("Liberia", "\U0001f1f1\U0001f1f7", "+231", (3, 3, 6, 12)),
-    ("Libya", "\U0001f1f1\U0001f1fe", "+218", (3, 3, 6, 12)),
-    ("Madagascar", "\U0001f1f2\U0001f1ec", "+261", (3, 3, 6, 12)),
-    ("Malawi", "\U0001f1f2\U0001f1fc", "+265", (3, 3, 6, 12)),
-    ("Mali", "\U0001f1f2\U0001f1f1", "+223", (3, 3, 6, 12)),
-    ("Mauritania", "\U0001f1f2\U0001f1f7", "+222", (3, 3, 6, 12)),
-    ("Mauritius", "\U0001f1f2\U0001f1fa", "+230", (3, 3, 6, 12)),
-    ("Morocco", "\U0001f1f2\U0001f1e6", "+212", (3, 3, 6, 12)),
-    ("Mozambique", "\U0001f1f2\U0001f1ff", "+258", (3, 3, 6, 12)),
-    ("Namibia", "\U0001f1f3\U0001f1e6", "+264", (3, 3, 6, 12)),
-    ("Niger", "\U0001f1f3\U0001f1ea", "+227", (3, 3, 6, 12)),
-    ("Nigeria", "\U0001f1f3\U0001f1ec", "+234", (3, 3, 6, 12)),
-    ("Rwanda", "\U0001f1f7\U0001f1fc", "+250", (3, 3, 6, 12)),
-    ("S\u00e3o Tom\u00e9", "\U0001f1f8\U0001f1f9", "+239", (3, 3, 6, 12)),
-    ("Senegal", "\U0001f1f8\U0001f1f3", "+221", (3, 3, 6, 12)),
-    ("Seychelles", "\U0001f1f8\U0001f1e8", "+248", (3, 3, 6, 12)),
-    ("Sierra Leone", "\U0001f1f8\U0001f1f1", "+232", (3, 3, 6, 12)),
-    ("Somalia", "\U0001f1f8\U0001f1f4", "+252", (3, 3, 6, 12)),
-    ("South Africa", "\U0001f1ff\U0001f1e6", "+27", (2, 3, 6, 11)),
-    ("South Sudan", "\U0001f1f8\U0001f1f8", "+211", (3, 3, 6, 12)),
-    ("Sudan", "\U0001f1f8\U0001f1e9", "+249", (3, 3, 6, 12)),
-    ("Swaziland", "\U0001f1f8\U0001f1ff", "+268", (3, 3, 6, 12)),
-    ("Tanzania", "\U0001f1f9\U0001f1ff", "+255", (3, 3, 6, 12)),
-    ("Togo", "\U0001f1f9\U0001f1ec", "+228", (3, 3, 6, 12)),
-    ("Tunisia", "\U0001f1f9\U0001f1f3", "+216", (3, 3, 6, 12)),
-    ("Uganda", "\U0001f1fa\U0001f1ec", "+256", (3, 3, 6, 12)),
-    ("Western Sahara", "\U0001f1ea\U0001f1ed", "+212", (3, 3, 6, 12)),
-    ("Zambia", "\U0001f1ff\U0001f1f2", "+260", (3, 3, 6, 12)),
-    ("Zimbabwe", "\U0001f1ff\U0001f1fc", "+263", (3, 3, 6, 12)),
+    # ── Africa ──────────────────────────────────────────────
+    ("Algeria",           "\U0001f1e9\U0001f1ff", "+213", (3, 3, 4)),
+    ("Angola",            "\U0001f1e6\U0001f1f4", "+244", (3, 3, 3)),
+    ("Benin",             "\U0001f1e7\U0001f1ef", "+229", (3, 3, 2)),
+    ("Botswana",          "\U0001f1e7\U0001f1fc", "+267", (3, 3, 3)),
+    ("Burkina Faso",      "\U0001f1e7\U0001f1eb", "+226", (3, 3, 2)),
+    ("Burundi",           "\U0001f1e7\U0001f1ee", "+257", (3, 3, 2)),
+    ("Cabo Verde",        "\U0001f1e8\U0001f1fb", "+238", (3, 3, 1)),
+    ("Cameroon",          "\U0001f1e8\U0001f1f2", "+237", (3, 3, 2)),
+    ("Central African Rep.", "\U0001f1e8\U0001f1eb", "+236", (3, 2, 3)),
+    ("Chad",              "\U0001f1f9\U0001f1e9", "+235", (3, 2, 3)),
+    ("Comoros",           "\U0001f1f0\U0001f1f2", "+269", (3, 3, 1)),
+    ("Congo",             "\U0001f1e8\U0001f1ec", "+242", (3, 3, 3)),
+    ("C\u00f4te d'Ivoire","\U0001f1e8\U0001f1ee", "+225", (3, 3, 3)),
+    ("DR Congo",          "\U0001f1e8\U0001f1e9", "+243", (3, 3, 3)),
+    ("Djibouti",          "\U0001f1e9\U0001f1ef", "+253", (3, 3, 2)),
+    ("Egypt",             "\U0001f1ea\U0001f1ec", "+20",  (2, 3, 4)),
+    ("Equatorial Guinea", "\U0001f1ec\U0001f1f6", "+240", (3, 3, 3)),
+    ("Eritrea",           "\U0001f1ea\U0001f1f7", "+291", (3, 3, 2)),
+    ("Ethiopia",          "\U0001f1ea\U0001f1f9", "+251", (3, 3, 3)),
+    ("Gabon",             "\U0001f1ec\U0001f1e6", "+241", (3, 2, 3)),
+    ("Gambia",            "\U0001f1ec\U0001f1f2", "+220", (3, 3, 2)),
+    ("Ghana",             "\U0001f1ec\U0001f1ed", "+233", (3, 3, 4)),
+    ("Guinea",            "\U0001f1ec\U0001f1f3", "+224", (3, 3, 2)),
+    ("Guinea-Bissau",     "\U0001f1ec\U0001f1fc", "+245", (3, 3, 1)),
+    ("Kenya",             "\U0001f1f0\U0001f1ea", "+254", (3, 3, 4)),
+    ("Lesotho",           "\U0001f1f1\U0001f1f8", "+266", (3, 3, 2)),
+    ("Liberia",           "\U0001f1f1\U0001f1f7", "+231", (3, 3, 2)),
+    ("Libya",             "\U0001f1f1\U0001f1fe", "+218", (3, 3, 4)),
+    ("Madagascar",        "\U0001f1f2\U0001f1ec", "+261", (3, 3, 3)),
+    ("Malawi",            "\U0001f1f2\U0001f1fc", "+265", (3, 3, 3)),
+    ("Mali",              "\U0001f1f2\U0001f1f1", "+223", (3, 3, 2)),
+    ("Mauritania",        "\U0001f1f2\U0001f1f7", "+222", (3, 3, 2)),
+    ("Mauritius",         "\U0001f1f2\U0001f1fa", "+230", (3, 3, 3)),
+    ("Morocco",           "\U0001f1f2\U0001f1e6", "+212", (3, 3, 4)),
+    ("Mozambique",        "\U0001f1f2\U0001f1ff", "+258", (3, 3, 3)),
+    ("Namibia",           "\U0001f1f3\U0001f1e6", "+264", (3, 3, 3)),
+    ("Niger",             "\U0001f1f3\U0001f1ea", "+227", (3, 3, 2)),
+    ("Nigeria",           "\U0001f1f3\U0001f1ec", "+234", (3, 3, 4)),
+    ("Rwanda",            "\U0001f1f7\U0001f1fc", "+250", (3, 3, 3)),
+    ("S\u00e3o Tom\u00e9","\U0001f1f8\U0001f1f9", "+239", (3, 3, 1)),
+    ("Senegal",           "\U0001f1f8\U0001f1f3", "+221", (3, 3, 3)),
+    ("Seychelles",        "\U0001f1f8\U0001f1e8", "+248", (3, 3, 1)),
+    ("Sierra Leone",      "\U0001f1f8\U0001f1f1", "+232", (3, 3, 3)),
+    ("Somalia",           "\U0001f1f8\U0001f1f4", "+252", (3, 3, 3)),
+    ("South Africa",      "\U0001f1ff\U0001f1e6", "+27",  (2, 3, 4)),
+    ("South Sudan",       "\U0001f1f8\U0001f1f8", "+211", (3, 3, 3)),
+    ("Sudan",             "\U0001f1f8\U0001f1e9", "+249", (3, 3, 4)),
+    ("Swaziland",         "\U0001f1f8\U0001f1ff", "+268", (3, 3, 2)),
+    ("Tanzania",          "\U0001f1f9\U0001f1ff", "+255", (3, 3, 4)),
+    ("Togo",              "\U0001f1f9\U0001f1ec", "+228", (3, 3, 2)),
+    ("Tunisia",           "\U0001f1f9\U0001f1f3", "+216", (3, 3, 2)),
+    ("Uganda",            "\U0001f1fa\U0001f1ec", "+256", (3, 3, 4)),
+    ("Western Sahara",    "\U0001f1ea\U0001f1ed", "+212", (3, 3, 4)),
+    ("Zambia",            "\U0001f1ff\U0001f1f2", "+260", (3, 3, 3)),
+    ("Zimbabwe",          "\U0001f1ff\U0001f1fc", "+263", (3, 3, 3)),
 
-    ("Antigua & Barbuda", "\U0001f1e6\U0001f1ec", "+1-268", (3, 3, 6, 12)),
-    ("Argentina", "\U0001f1e6\U0001f1f7", "+54", (2, 3, 6, 12)),
-    ("Bahamas", "\U0001f1e7\U0001f1f8", "+1-242", (3, 3, 6, 12)),
-    ("Barbados", "\U0001F1E7\U0001F1E7", "+1-246", (3, 3, 6, 12)),
-    ("Belize", "\U0001f1e7\U0001f1ff", "+501", (3, 3, 6, 12)),
-    ("Bolivia", "\U0001f1e7\U0001f1f4", "+591", (3, 3, 6, 12)),
-    ("Brazil", "\U0001f1e7\U0001f1f7", "+55", (2, 3, 6, 12)),
-    ("Canada", "\U0001f1e8\U0001f1e6", "+1", (3, 3, 6, 11)),
-    ("Chile", "\U0001f1e8\U0001f1f1", "+56", (2, 3, 6, 12)),
-    ("Colombia", "\U0001f1e8\U0001f1f4", "+57", (3, 3, 6, 12)),
-    ("Costa Rica", "\U0001f1e8\U0001f1f7", "+506", (3, 3, 6, 12)),
-    ("Cuba", "\U0001f1e8\U0001f1fa", "+53", (3, 3, 6, 12)),
-    ("Dominica", "\U0001f1e9\U0001f1f2", "+1-767", (3, 3, 6, 12)),
-    ("Dominican Rep.", "\U0001f1e9\U0001f1f4", "+1-809", (3, 3, 6, 12)),
-    ("Ecuador", "\U0001f1ea\U0001f1e8", "+593", (3, 3, 6, 12)),
-    ("El Salvador", "\U0001f1f8\U0001f1fb", "+503", (3, 3, 6, 12)),
-    ("Grenada", "\U0001f1ec\U0001f1e9", "+1-473", (3, 3, 6, 12)),
-    ("Guatemala", "\U0001f1ec\U0001f1f9", "+502", (3, 3, 6, 12)),
-    ("Guyana", "\U0001f1ec\U0001f1fe", "+592", (3, 3, 6, 12)),
-    ("Haiti", "\U0001f1ed\U0001f1f9", "+509", (3, 3, 6, 12)),
-    ("Honduras", "\U0001f1ed\U0001f1f3", "+504", (3, 3, 6, 12)),
-    ("Jamaica", "\U0001f1ef\U0001f1f2", "+1-876", (3, 3, 6, 12)),
-    ("Mexico", "\U0001f1f2\U0001f1fd", "+52", (2, 3, 6, 12)),
-    ("Nicaragua", "\U0001f1f3\U0001f1ee", "+505", (3, 3, 6, 12)),
-    ("Panama", "\U0001f1f5\U0001f1e6", "+507", (3, 3, 6, 12)),
-    ("Paraguay", "\U0001f1f5\U0001f1fe", "+595", (3, 3, 6, 12)),
-    ("Peru", "\U0001f1f5\U0001f1ea", "+51", (3, 3, 6, 12)),
-    ("St. Kitts & Nevis", "\U0001f1f0\U0001f1f3", "+1-869", (3, 3, 6, 12)),
-    ("St. Lucia", "\U0001f1f1\U0001f1e8", "+1-758", (3, 3, 6, 12)),
-    ("St. Vincent", "\U0001f1fb\U0001f1e8", "+1-784", (3, 3, 6, 12)),
-    ("Trinidad & Tobago", "\U0001f1f9\U0001f1f9", "+1-868", (3, 3, 6, 12)),
-    ("USA", "\U0001f1fa\U0001f1f8", "+1", (3, 3, 6, 11)),
-    ("Uruguay", "\U0001f1fa\U0001f1fe", "+598", (3, 3, 6, 12)),
-    ("Venezuela", "\U0001f1fb\U0001f1ea", "+58", (3, 3, 6, 12)),
+    # ── Americas (NANPA: 10 digits local = 3+3+4) ──────────
+    ("Antigua & Barbuda", "\U0001f1e6\U0001f1ec", "+1-268", (3, 3, 4)),
+    ("Argentina",         "\U0001f1e6\U0001f1f7", "+54",   (2, 3, 4)),
+    ("Bahamas",           "\U0001f1e7\U0001f1f8", "+1-242", (3, 3, 4)),
+    ("Barbados",          "\U0001F1E7\U0001F1E7", "+1-246", (3, 3, 4)),
+    ("Belize",            "\U0001f1e7\U0001f1ff", "+501",  (3, 3, 1)),
+    ("Bolivia",           "\U0001f1e7\U0001f1f4", "+591",  (3, 3, 2)),
+    ("Brazil",            "\U0001f1e7\U0001f1f7", "+55",   (2, 3, 4)),
+    ("Canada",            "\U0001f1e8\U0001f1e6", "+1",    (3, 3, 4)),
+    ("Chile",             "\U0001f1e8\U0001f1f1", "+56",   (2, 3, 4)),
+    ("Colombia",          "\U0001f1e8\U0001f1f4", "+57",   (3, 3, 4)),
+    ("Costa Rica",        "\U0001f1e8\U0001f1f7", "+506",  (3, 3, 2)),
+    ("Cuba",              "\U0001f1e8\U0001f1fa", "+53",   (3, 3, 2)),
+    ("Dominica",          "\U0001f1e9\U0001f1f2", "+1-767", (3, 3, 4)),
+    ("Dominican Rep.",    "\U0001f1e9\U0001f1f4", "+1-809", (3, 3, 4)),
+    ("Ecuador",           "\U0001f1ea\U0001f1e8", "+593",  (3, 3, 3)),
+    ("El Salvador",       "\U0001f1f8\U0001f1fb", "+503",  (3, 3, 2)),
+    ("Grenada",           "\U0001f1ec\U0001f1e9", "+1-473", (3, 3, 4)),
+    ("Guatemala",         "\U0001f1ec\U0001f1f9", "+502",  (3, 3, 2)),
+    ("Guyana",            "\U0001f1ec\U0001f1fe", "+592",  (3, 3, 1)),
+    ("Haiti",             "\U0001f1ed\U0001f1f9", "+509",  (3, 3, 2)),
+    ("Honduras",          "\U0001f1ed\U0001f1f3", "+504",  (3, 3, 2)),
+    ("Jamaica",           "\U0001f1ef\U0001f1f2", "+1-876", (3, 3, 4)),
+    ("Mexico",            "\U0001f1f2\U0001f1fd", "+52",   (2, 3, 4)),
+    ("Nicaragua",         "\U0001f1f3\U0001f1ee", "+505",  (3, 3, 2)),
+    ("Panama",            "\U0001f1f5\U0001f1e6", "+507",  (3, 3, 2)),
+    ("Paraguay",          "\U0001f1f5\U0001f1fe", "+595",  (3, 3, 3)),
+    ("Peru",              "\U0001f1f5\U0001f1ea", "+51",   (3, 3, 3)),
+    ("St. Kitts & Nevis", "\U0001f1f0\U0001f1f3", "+1-869", (3, 3, 4)),
+    ("St. Lucia",         "\U0001f1f1\U0001f1e8", "+1-758", (3, 3, 4)),
+    ("St. Vincent",       "\U0001f1fb\U0001f1e8", "+1-784", (3, 3, 4)),
+    ("Trinidad & Tobago", "\U0001f1f9\U0001f1f9", "+1-868", (3, 3, 4)),
+    ("USA",               "\U0001f1fa\U0001f1f8", "+1",    (3, 3, 4)),
+    ("Uruguay",           "\U0001f1fa\U0001f1fe", "+598",  (3, 3, 3)),
+    ("Venezuela",         "\U0001f1fb\U0001f1ea", "+58",   (3, 3, 4)),
 
-    ("Afghanistan", "\U0001f1e6\U0001f1eb", "+93", (3, 3, 6, 12)),
-    ("Bahrain", "\U0001f1e7\U0001f1ed", "+973", (3, 3, 6, 12)),
-    ("Bangladesh", "\U0001f1e7\U0001f1e9", "+880", (3, 3, 6, 12)),
-    ("Bhutan", "\U0001f1e7\U0001f1f9", "+975", (3, 3, 6, 12)),
-    ("Brunei", "\U0001f1e7\U0001f1f3", "+673", (3, 3, 6, 12)),
-    ("Cambodia", "\U0001f1f0\U0001f1ed", "+855", (3, 3, 6, 12)),
-    ("China", "\U0001f1e8\U0001f1f3", "+86", (2, 3, 6, 12)),
-    ("Cyprus", "\U0001f1e8\U0001f1fe", "+357", (3, 3, 6, 12)),
-    ("East Timor", "\U0001f1f9\U0001f1f9", "+670", (3, 3, 6, 12)),
-    ("Georgia", "\U0001f1ec\U0001f1ea", "+995", (3, 3, 6, 12)),
-    ("Hong Kong", "\U0001f1ed\U0001f1f0", "+852", (3, 3, 6, 12)),
-    ("India", "\U0001f1ee\U0001f1f3", "+91", (3, 3, 6, 11)),
-    ("Indonesia", "\U0001f1ee\U0001f1e9", "+62", (2, 3, 6, 12)),
-    ("Iran", "\U0001f1ee\U0001f1f7", "+98", (3, 3, 6, 12)),
-    ("Iraq", "\U0001f1ee\U0001f1f6", "+964", (3, 3, 6, 12)),
-    ("Israel", "\U0001f1ee\U0001f1f1", "+972", (3, 3, 6, 12)),
-    ("Japan", "\U0001f1ef\U0001f1f5", "+81", (3, 3, 6, 11)),
-    ("Jordan", "\U0001f1ef\U0001f1f4", "+962", (3, 3, 6, 12)),
-    ("Kazakhstan", "\U0001f1f0\U0001f1ff", "+7", (3, 3, 6, 12)),
-    ("Kuwait", "\U0001f1f0\U0001f1fc", "+965", (3, 3, 6, 12)),
-    ("Kyrgyzstan", "\U0001f1f0\U0001f1ec", "+996", (3, 3, 6, 12)),
-    ("Laos", "\U0001f1f1\U0001f1e6", "+856", (3, 3, 6, 12)),
-    ("Lebanon", "\U0001f1f1\U0001f1e7", "+961", (3, 3, 6, 12)),
-    ("Macau", "\U0001f1f2\U0001f1f4", "+853", (3, 3, 6, 12)),
-    ("Malaysia", "\U0001f1f2\U0001f1fe", "+60", (2, 3, 6, 12)),
-    ("Maldives", "\U0001f1f2\U0001f1fb", "+960", (3, 3, 6, 12)),
-    ("Mongolia", "\U0001f1f2\U0001f1f3", "+976", (3, 3, 6, 12)),
-    ("Myanmar", "\U0001f1f2\U0001f1f2", "+95", (3, 3, 6, 12)),
-    ("Nepal", "\U0001f1f3\U0001f1f5", "+977", (3, 3, 6, 12)),
-    ("North Korea", "\U0001f1f0\U0001f1f5", "+850", (3, 3, 6, 12)),
-    ("Oman", "\U0001f1f4\U0001f1f2", "+968", (3, 3, 6, 12)),
-    ("Pakistan", "\U0001f1f5\U0001f1f0", "+92", (3, 3, 6, 12)),
-    ("Palestine", "\U0001f1f5\U0001f1f8", "+970", (3, 3, 6, 12)),
-    ("Philippines", "\U0001f1f5\U0001f1ed", "+63", (3, 3, 6, 12)),
-    ("Qatar", "\U0001f1f6\U0001f1e6", "+974", (3, 3, 6, 12)),
-    ("Saudi Arabia", "\U0001f1f8\U0001f1e6", "+966", (3, 3, 6, 12)),
-    ("Singapore", "\U0001f1f8\U0001f1ec", "+65", (3, 3, 6, 12)),
-    ("South Korea", "\U0001f1f0\U0001f1f7", "+82", (3, 3, 6, 12)),
-    ("Sri Lanka", "\U0001f1f1\U0001f1f0", "+94", (3, 3, 6, 12)),
-    ("Syria", "\U0001f1f8\U0001f1fe", "+963", (3, 3, 6, 12)),
-    ("Taiwan", "\U0001f1f9\U0001f1fc", "+886", (3, 3, 6, 12)),
-    ("Tajikistan", "\U0001f1f9\U0001f1ef", "+992", (3, 3, 6, 12)),
-    ("Thailand", "\U0001f1f9\U0001f1ed", "+66", (3, 3, 6, 12)),
-    ("Turkey", "\U0001f1f9\U0001f1f7", "+90", (3, 3, 6, 12)),
-    ("Turkmenistan", "\U0001f1f9\U0001f1f2", "+993", (3, 3, 6, 12)),
-    ("UAE", "\U0001f1e6\U0001f1ea", "+971", (3, 3, 6, 12)),
-    ("Uzbekistan", "\U0001f1fa\U0001f1ff", "+998", (3, 3, 6, 12)),
-    ("Vietnam", "\U0001f1fb\U0001f1f3", "+84", (3, 3, 6, 12)),
-    ("Yemen", "\U0001f1fe\U0001f1ea", "+967", (3, 3, 6, 12)),
+    # ── Asia ───────────────────────────────────────────────
+    ("Afghanistan",       "\U0001f1e6\U0001f1eb", "+93",   (3, 3, 3)),
+    ("Bahrain",           "\U0001f1e7\U0001f1ed", "+973",  (3, 3, 2)),
+    ("Bangladesh",        "\U0001f1e7\U0001f1e9", "+880",  (3, 3, 4)),
+    ("Bhutan",            "\U0001f1e7\U0001f1f9", "+975",  (3, 3, 2)),
+    ("Brunei",            "\U0001f1e7\U0001f1f3", "+673",  (3, 3, 2)),
+    ("Cambodia",          "\U0001f1f0\U0001f1ed", "+855",  (3, 3, 3)),
+    ("China",             "\U0001f1e8\U0001f1f3", "+86",   (3, 4, 4)),
+    ("Cyprus",            "\U0001f1e8\U0001f1fe", "+357",  (3, 3, 3)),
+    ("East Timor",        "\U0001f1f9\U0001f1f9", "+670",  (3, 3, 2)),
+    ("Georgia",           "\U0001f1ec\U0001f1ea", "+995",  (3, 3, 3)),
+    ("Hong Kong",         "\U0001f1ed\U0001f1f0", "+852",  (3, 3, 3)),
+    ("India",             "\U0001f1ee\U0001f1f3", "+91",   (3, 3, 4)),
+    ("Indonesia",         "\U0001f1ee\U0001f1e9", "+62",   (2, 3, 4)),
+    ("Iran",              "\U0001f1ee\U0001f1f7", "+98",   (3, 3, 4)),
+    ("Iraq",              "\U0001f1ee\U0001f1f6", "+964",  (3, 3, 4)),
+    ("Israel",            "\U0001f1ee\U0001f1f1", "+972",  (3, 3, 4)),
+    ("Japan",             "\U0001f1ef\U0001f1f5", "+81",   (3, 4, 4)),
+    ("Jordan",            "\U0001f1ef\U0001f1f4", "+962",  (3, 3, 3)),
+    ("Kazakhstan",        "\U0001f1f0\U0001f1ff", "+7",    (3, 3, 4)),
+    ("Kuwait",            "\U0001f1f0\U0001f1fc", "+965",  (3, 3, 2)),
+    ("Kyrgyzstan",        "\U0001f1f0\U0001f1ec", "+996",  (3, 3, 3)),
+    ("Laos",              "\U0001f1f1\U0001f1e6", "+856",  (3, 3, 3)),
+    ("Lebanon",           "\U0001f1f1\U0001f1e7", "+961",  (3, 3, 2)),
+    ("Macau",             "\U0001f1f2\U0001f1f4", "+853",  (3, 3, 2)),
+    ("Malaysia",          "\U0001f1f2\U0001f1fe", "+60",   (2, 3, 4)),
+    ("Maldives",          "\U0001f1f2\U0001f1fb", "+960",  (3, 3, 2)),
+    ("Mongolia",          "\U0001f1f2\U0001f1f3", "+976",  (3, 3, 3)),
+    ("Myanmar",           "\U0001f1f2\U0001f1f2", "+95",   (3, 3, 3)),
+    ("Nepal",             "\U0001f1f3\U0001f1f5", "+977",  (3, 3, 4)),
+    ("North Korea",       "\U0001f1f0\U0001f1f5", "+850",  (3, 3, 3)),
+    ("Oman",              "\U0001f1f4\U0001f1f2", "+968",  (3, 3, 2)),
+    ("Pakistan",          "\U0001f1f5\U0001f1f0", "+92",   (3, 3, 4)),
+    ("Palestine",         "\U0001f1f5\U0001f1f8", "+970",  (3, 3, 4)),
+    ("Philippines",       "\U0001f1f5\U0001f1ed", "+63",   (3, 3, 4)),
+    ("Qatar",             "\U0001f1f6\U0001f1e6", "+974",  (3, 3, 2)),
+    ("Saudi Arabia",      "\U0001f1f8\U0001f1e6", "+966",  (3, 3, 4)),
+    ("Singapore",         "\U0001f1f8\U0001f1ec", "+65",   (3, 3, 4)),
+    ("South Korea",       "\U0001f1f0\U0001f1f7", "+82",   (3, 3, 4)),
+    ("Sri Lanka",         "\U0001f1f1\U0001f1f0", "+94",   (3, 3, 4)),
+    ("Syria",             "\U0001f1f8\U0001f1fe", "+963",  (3, 3, 3)),
+    ("Taiwan",            "\U0001f1f9\U0001f1fc", "+886",  (3, 3, 4)),
+    ("Tajikistan",        "\U0001f1f9\U0001f1ef", "+992",  (3, 3, 3)),
+    ("Thailand",          "\U0001f1f9\U0001f1ed", "+66",   (2, 3, 4)),
+    ("Turkey",            "\U0001f1f9\U0001f1f7", "+90",   (3, 3, 4)),
+    ("Turkmenistan",      "\U0001f1f9\U0001f1f2", "+993",  (3, 3, 3)),
+    ("UAE",               "\U0001f1e6\U0001f1ea", "+971",  (3, 3, 4)),
+    ("Uzbekistan",        "\U0001f1fa\U0001f1ff", "+998",  (3, 3, 4)),
+    ("Vietnam",           "\U0001f1fb\U0001f1f3", "+84",   (3, 3, 4)),
+    ("Yemen",             "\U0001f1fe\U0001f1ea", "+967",  (3, 3, 4)),
 
-    ("Albania", "\U0001f1e6\U0001f1f1", "+355", (3, 3, 6, 12)),
-    ("Andorra", "\U0001f1e6\U0001f1e9", "+376", (3, 3, 6, 12)),
-    ("Armenia", "\U0001f1e6\U0001f1f2", "+374", (3, 3, 6, 12)),
-    ("Austria", "\U0001f1e6\U0001f1f9", "+43", (3, 3, 6, 12)),
-    ("Azerbaijan", "\U0001f1e6\U0001f1ff", "+994", (3, 3, 6, 12)),
-    ("Belarus", "\U0001f1e7\U0001f1fe", "+375", (3, 3, 6, 12)),
-    ("Belgium", "\U0001f1e7\U0001f1ea", "+32", (3, 3, 6, 12)),
-    ("Bosnia", "\U0001f1e7\U0001f1e6", "+387", (3, 3, 6, 12)),
-    ("Bulgaria", "\U0001f1e7\U0001f1ec", "+359", (3, 3, 6, 12)),
-    ("Croatia", "\U0001f1ed\U0001f1f7", "+385", (3, 3, 6, 12)),
-    ("Czech Rep.", "\U0001f1e8\U0001f1ff", "+420", (3, 3, 6, 12)),
-    ("Denmark", "\U0001f1e9\U0001f1f0", "+45", (3, 3, 6, 12)),
-    ("Estonia", "\U0001f1ea\U0001f1ea", "+372", (3, 3, 6, 12)),
-    ("Finland", "\U0001f1eb\U0001f1ee", "+358", (3, 3, 6, 12)),
-    ("France", "\U0001f1eb\U0001f1f7", "+33", (2, 3, 6, 12)),
-    ("Germany", "\U0001f1e9\U0001f1ea", "+49", (3, 3, 6, 12)),
-    ("Greece", "\U0001f1ec\U0001f1f7", "+30", (3, 3, 6, 12)),
-    ("Hungary", "\U0001f1ed\U0001f1fa", "+36", (3, 3, 6, 12)),
-    ("Iceland", "\U0001f1ee\U0001f1f8", "+354", (3, 3, 6, 12)),
-    ("Ireland", "\U0001f1ee\U0001f1ea", "+353", (3, 3, 6, 12)),
-    ("Italy", "\U0001f1ee\U0001f1f9", "+39", (3, 3, 6, 12)),
-    ("Kosovo", "\U0001f1fd\U0001f1f0", "+383", (3, 3, 6, 12)),
-    ("Latvia", "\U0001f1f1\U0001f1fb", "+371", (3, 3, 6, 12)),
-    ("Liechtenstein", "\U0001f1f1\U0001f1ee", "+423", (3, 3, 6, 12)),
-    ("Lithuania", "\U0001f1f1\U0001f1f9", "+370", (3, 3, 6, 12)),
-    ("Luxembourg", "\U0001f1f1\U0001f1fa", "+352", (3, 3, 6, 12)),
-    ("Malta", "\U0001f1f2\U0001f1f9", "+356", (3, 3, 6, 12)),
-    ("Moldova", "\U0001f1f2\U0001f1e9", "+373", (3, 3, 6, 12)),
-    ("Monaco", "\U0001f1f2\U0001f1e8", "+377", (3, 3, 6, 12)),
-    ("Montenegro", "\U0001f1f2\U0001f1ea", "+382", (3, 3, 6, 12)),
-    ("Netherlands", "\U0001f1f3\U0001f1f1", "+31", (3, 3, 6, 12)),
-    ("North Macedonia", "\U0001f1f2\U0001f1f0", "+389", (3, 3, 6, 12)),
-    ("Norway", "\U0001f1f3\U0001f1f4", "+47", (3, 3, 6, 12)),
-    ("Poland", "\U0001f1f5\U0001f1f1", "+48", (3, 3, 6, 12)),
-    ("Portugal", "\U0001f1f5\U0001f1f9", "+351", (3, 3, 6, 12)),
-    ("Romania", "\U0001f1f7\U0001f1f4", "+40", (3, 3, 6, 12)),
-    ("Russia", "\U0001f1f7\U0001f1fa", "+7", (3, 3, 6, 12)),
-    ("San Marino", "\U0001f1f8\U0001f1f2", "+378", (3, 3, 6, 12)),
-    ("Serbia", "\U0001f1f7\U0001f1f8", "+381", (3, 3, 6, 12)),
-    ("Slovakia", "\U0001f1f8\U0001f1f0", "+421", (3, 3, 6, 12)),
-    ("Slovenia", "\U0001f1f8\U0001f1ee", "+386", (3, 3, 6, 12)),
-    ("Spain", "\U0001f1ea\U0001f1f8", "+34", (3, 3, 6, 12)),
-    ("Sweden", "\U0001f1f8\U0001f1ea", "+46", (3, 3, 6, 12)),
-    ("Switzerland", "\U0001f1e8\U0001f1ed", "+41", (3, 3, 6, 12)),
-    ("Ukraine", "\U0001f1fa\U0001f1e6", "+380", (3, 3, 6, 12)),
-    ("UK", "\U0001f1ec\U0001f1e7", "+44", (3, 3, 6, 11)),
-    ("Vatican City", "\U0001f1fb\U0001f1e6", "+379", (3, 3, 6, 12)),
+    # ── Europe ────────────────────────────────────────────
+    ("Albania",           "\U0001f1e6\U0001f1f1", "+355",  (3, 3, 3)),
+    ("Andorra",           "\U0001f1e6\U0001f1e9", "+376",  (3, 3, 1)),
+    ("Armenia",           "\U0001f1e6\U0001f1f2", "+374",  (3, 3, 3)),
+    ("Austria",           "\U0001f1e6\U0001f1f9", "+43",   (3, 3, 4)),
+    ("Azerbaijan",        "\U0001f1e6\U0001f1ff", "+994",  (3, 3, 3)),
+    ("Belarus",           "\U0001f1e7\U0001f1fe", "+375",  (3, 3, 4)),
+    ("Belgium",           "\U0001f1e7\U0001f1ea", "+32",   (3, 3, 4)),
+    ("Bosnia",            "\U0001f1e7\U0001f1e6", "+387",  (3, 3, 3)),
+    ("Bulgaria",          "\U0001f1e7\U0001f1ec", "+359",  (3, 3, 4)),
+    ("Croatia",           "\U0001f1ed\U0001f1f7", "+385",  (3, 3, 3)),
+    ("Czech Rep.",        "\U0001f1e8\U0001f1ff", "+420",  (3, 3, 4)),
+    ("Denmark",           "\U0001f1e9\U0001f1f0", "+45",   (3, 3, 4)),
+    ("Estonia",           "\U0001f1ea\U0001f1ea", "+372",  (3, 3, 3)),
+    ("Finland",           "\U0001f1eb\U0001f1ee", "+358",  (3, 3, 4)),
+    ("France",            "\U0001f1eb\U0001f1f7", "+33",   (2, 3, 4)),
+    ("Germany",           "\U0001f1e9\U0001f1ea", "+49",   (3, 4, 4)),
+    ("Greece",            "\U0001f1ec\U0001f1f7", "+30",   (3, 3, 4)),
+    ("Hungary",           "\U0001f1ed\U0001f1fa", "+36",   (3, 3, 4)),
+    ("Iceland",           "\U0001f1ee\U0001f1f8", "+354",  (3, 3, 3)),
+    ("Ireland",           "\U0001f1ee\U0001f1ea", "+353",  (3, 3, 4)),
+    ("Italy",             "\U0001f1ee\U0001f1f9", "+39",   (3, 3, 4)),
+    ("Kosovo",            "\U0001f1fd\U0001f1f0", "+383",  (3, 3, 3)),
+    ("Latvia",            "\U0001f1f1\U0001f1fb", "+371",  (3, 3, 2)),
+    ("Liechtenstein",     "\U0001f1f1\U0001f1ee", "+423",  (3, 3, 1)),
+    ("Lithuania",         "\U0001f1f1\U0001f1f9", "+370",  (3, 3, 3)),
+    ("Luxembourg",        "\U0001f1f1\U0001f1fa", "+352",  (3, 3, 2)),
+    ("Malta",             "\U0001f1f2\U0001f1f9", "+356",  (3, 3, 2)),
+    ("Moldova",           "\U0001f1f2\U0001f1e9", "+373",  (3, 3, 3)),
+    ("Monaco",            "\U0001f1f2\U0001f1e8", "+377",  (3, 2, 3)),
+    ("Montenegro",        "\U0001f1f2\U0001f1ea", "+382",  (3, 3, 2)),
+    ("Netherlands",       "\U0001f1f3\U0001f1f1", "+31",   (3, 3, 4)),
+    ("North Macedonia",   "\U0001f1f2\U0001f1f0", "+389",  (3, 3, 3)),
+    ("Norway",            "\U0001f1f3\U0001f1f4", "+47",   (3, 3, 4)),
+    ("Poland",            "\U0001f1f5\U0001f1f1", "+48",   (3, 3, 4)),
+    ("Portugal",          "\U0001f1f5\U0001f1f9", "+351",  (3, 3, 4)),
+    ("Romania",           "\U0001f1f7\U0001f1f4", "+40",   (3, 3, 4)),
+    ("Russia",            "\U0001f1f7\U0001f1fa", "+7",    (3, 3, 4)),
+    ("San Marino",        "\U0001f1f8\U0001f1f2", "+378",  (3, 3, 3)),
+    ("Serbia",            "\U0001f1f7\U0001f1f8", "+381",  (3, 3, 4)),
+    ("Slovakia",          "\U0001f1f8\U0001f1f0", "+421",  (3, 3, 4)),
+    ("Slovenia",          "\U0001f1f8\U0001f1ee", "+386",  (3, 3, 3)),
+    ("Spain",             "\U0001f1ea\U0001f1f8", "+34",   (3, 3, 4)),
+    ("Sweden",            "\U0001f1f8\U0001f1ea", "+46",   (3, 3, 4)),
+    ("Switzerland",       "\U0001f1e8\U0001f1ed", "+41",   (3, 3, 4)),
+    ("Ukraine",           "\U0001f1fa\U0001f1e6", "+380",  (3, 3, 4)),
+    ("UK",                "\U0001f1ec\U0001f1e7", "+44",   (3, 4, 3)),
+    ("Vatican City",      "\U0001f1fb\U0001f1e6", "+379",  (3, 3, 1)),
 
-    ("Australia", "\U0001f1e6\U0001f1fa", "+61", (3, 3, 6, 12)),
-    ("Fiji", "\U0001f1eb\U0001f1ef", "+679", (3, 3, 6, 12)),
-    ("Kiribati", "\U0001f1f0\U0001f1ee", "+686", (3, 3, 6, 12)),
-    ("Marshall Is.", "\U0001f1f2\U0001f1ed", "+692", (3, 3, 6, 12)),
-    ("Micronesia", "\U0001f1eb\U0001f1f2", "+691", (3, 3, 6, 12)),
-    ("Nauru", "\U0001f1f3\U0001f1f7", "+674", (3, 3, 6, 12)),
-    ("New Zealand", "\U0001f1f3\U0001f1ff", "+64", (3, 3, 6, 12)),
-    ("Palau", "\U0001f1f5\U0001f1ed", "+680", (3, 3, 6, 12)),
-    ("Papua New Guinea", "\U0001f1f5\U0001f1ec", "+675", (3, 3, 6, 12)),
-    ("Samoa", "\U0001f1fc\U0001f1f8", "+685", (3, 3, 6, 12)),
-    ("Solomon Is.", "\U0001f1f8\U0001f1e7", "+677", (3, 3, 6, 12)),
-    ("Tonga", "\U0001f1f9\U0001f1f4", "+676", (3, 3, 6, 12)),
-    ("Tuvalu", "\U0001f1f9\U0001f1fb", "+688", (3, 3, 6, 12)),
-    ("Vanuatu", "\U0001f1fb\U0001f1fa", "+678", (3, 3, 6, 12)),
+    # ── Oceania ────────────────────────────────────────────
+    ("Australia",         "\U0001f1e6\U0001f1fa", "+61",   (3, 3, 4)),
+    ("Fiji",              "\U0001f1eb\U0001f1ef", "+679",  (3, 3, 1)),
+    ("Kiribati",          "\U0001f1f0\U0001f1ee", "+686",  (3, 3, 2)),
+    ("Marshall Is.",      "\U0001f1f2\U0001f1ed", "+692",  (3, 3, 1)),
+    ("Micronesia",        "\U0001f1eb\U0001f1f2", "+691",  (3, 3, 1)),
+    ("Nauru",             "\U0001f1f3\U0001f1f7", "+674",  (3, 3, 1)),
+    ("New Zealand",       "\U0001f1f3\U0001f1ff", "+64",   (3, 3, 4)),
+    ("Palau",             "\U0001f1f5\U0001f1ed", "+680",  (3, 3, 1)),
+    ("Papua New Guinea",  "\U0001f1f5\U0001f1ec", "+675",  (3, 3, 2)),
+    ("Samoa",             "\U0001f1fc\U0001f1f8", "+685",  (3, 3, 1)),
+    ("Solomon Is.",       "\U0001f1f8\U0001f1e7", "+677",  (3, 3, 2)),
+    ("Tonga",             "\U0001f1f9\U0001f1f4", "+676",  (3, 3, 1)),
+    ("Tuvalu",            "\U0001f1f9\U0001f1fb", "+688",  (3, 0o2, 0o1)),
+    ("Vanuatu",           "\U0001f1fb\U0001f1fa", "+678",  (3, 3, 1)),
 ]
 
 # ================================================================
@@ -293,31 +301,34 @@ def init_db():
     conn.commit(); conn.close()
 
 # ================================================================
-# 📱 NUMBER GENERATION
+# 📱 NUMBER GENERATION — FIXED: uses fmt sum as digit count
+#    Local number = sum(fmt) digits (usually 7-11)
 # ================================================================
 
 def generate_number_for_country(country_tuple):
     name, flag, dial_code, fmt = country_tuple
-    digits_needed = 10 - len(dial_code.replace("+", "").replace("-", "").split("-")[0]) if "-" in dial_code else 10 - len(dial_code.replace("+", ""))
-    digits_needed = max(digits_needed, 7)
 
-    if fmt:
-        parts = []
-        for f in fmt:
-            parts.append("".join([str(random.randint(0,9)) for _ in range(f)]))
-        number = "".join(parts)
+    # Sum of format tuple = total local number digits
+    local_digits = sum(fmt)
 
-        display_parts = [dial_code]
-        idx = 0
-        for f in fmt:
-            display_parts.append(number[idx:idx+f])
-            idx += f
-        display = " ".join(display_parts)
-    else:
-        number = "".join([str(random.randint(0,9)) for _ in range(digits_needed)])
-        display = f"{dial_code} {number}"
+    # Generate random local number with proper length
+    parts = []
+    for f in fmt:
+        parts.append("".join([str(random.randint(0, 9)) for _ in range(f)]))
+    number = "".join(parts)
 
-    full_phone = dial_code.replace("-", "").replace(" ", "") + number
+    # Build display: dial_code + grouped digits
+    display_parts = [dial_code]
+    idx = 0
+    for f in fmt:
+        display_parts.append(number[idx:idx + f])
+        idx += f
+    display = " ".join(display_parts)
+
+    # Full E.164 phone (country code + local number, no spaces/dashes)
+    clean_dial = dial_code.replace("-", "").replace(" ", "")
+    full_phone = clean_dial + number
+
     return full_phone, display
 
 def save_number_to_db(user_id, country, flag, dial_code, phone, display):
@@ -368,14 +379,13 @@ def save_otp_message(number_id, phone, country, sender, msg_text, otp, service, 
 def extract_otp(text):
     if not text: return ""
     text = text.strip()
-    patterns = [
-        r'\b(\d{4,8})\b',
-        r'(?:code|OTP|verification|password|login|pin|token|auth)[:\s]*(\d{4,8})',
-        r'(\d{4,8})(?:\s*(?:is|\.|$))',
-    ]
     nums = re.findall(r'\b(\d{4,8})\b', text)
     if nums:
         return nums[0]
+    patterns = [
+        r'(?:code|OTP|verification|password|login|pin|token|auth)[:\s]*(\d{4,8})',
+        r'(\d{4,8})(?:\s*(?:is|\.|$))',
+    ]
     for pat in patterns:
         m = re.search(pat, text, re.IGNORECASE)
         if m: return m.group(1) if m.lastindex else m.group(0)
@@ -482,25 +492,21 @@ def twilio_webhook():
 
     phone = sender.replace("+", "").replace(" ", "").replace("-", "")
     otp = extract_otp(body)
-    service = "Twilio"
 
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-
     c.execute("SELECT id, user_id, country FROM assigned_numbers WHERE REPLACE(REPLACE(phone_number,'+',''),' ','') LIKE ? AND status='active' LIMIT 1",
               (f"%{phone[-10:]}%",))
     row = c.fetchone()
-
     if not row:
         c.execute("SELECT id, user_id, country FROM assigned_numbers WHERE status='active' ORDER BY RANDOM() LIMIT 1")
         row = c.fetchone()
-
     if row:
         num_id, user_id, country = row
-        mid, total = save_otp_message(num_id, phone, country, sender, body, otp, service, "twilio")
+        mid, total = save_otp_message(num_id, phone, country, sender, body, otp, "Twilio", "twilio")
         if user_id and otp:
             try:
-                text = f"\U0001f4e1 **Real OTP!**\n\U0001f4de `{esc(phone)}`\n\U0001f511 `{esc(otp)}`\n\U0001f4c5 {esc(service)}"
+                text = f"\U0001f4e1 **Real OTP!**\n\U0001f4de `{esc(phone)}`\n\U0001f511 `{esc(otp)}`"
                 bot = Bot(token=BOT_TOKEN)
                 try:
                     asyncio.run(bot.send_message(chat_id=user_id, text=text, parse_mode="Markdown"))
@@ -508,7 +514,6 @@ def twilio_webhook():
                     pass
             except:
                 pass
-
     conn.close()
     return jsonify({"status": "received", "otp": otp, "phone": phone})
 
@@ -520,7 +525,7 @@ def start_flask():
     flask_app.run(host="0.0.0.0", port=10000, debug=False, use_reloader=False)
 
 # ================================================================
-# 🔁 HEALTH PING (every 4 minutes — keeps Render awake)
+# 🔁 HEALTH PING (every 4 minutes)
 # ================================================================
 
 def health_ping():
@@ -581,7 +586,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn.commit(); conn.close()
 
     render_url = os.environ.get("RENDER_EXTERNAL_URL", "https://cyberx_otp.onrender.com")
-
     msg = (
         "\\[CYBERX Bot\\]\n\n"
         "\\[207 countries\\] worldwide\n\n"
@@ -595,7 +599,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Webhook URL: {render_url}/twilio-sms\n"
         "For educational purposes only"
     )
-
     await update.message.reply_text(msg, reply_markup=build_main_keyboard())
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -665,10 +668,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         has_real = any(m[1]!="SYSTEM" for m in msgs) if msgs else False
         if not has_real:
             conn.close()
-            msg = f"Inbox - {flag} {country}\nPhone: {phone}\n\nNo OTPs yet\n\nUse {phone} on any service, request verification, then check back!"
-            await safe_edit(query, msg, reply_markup=build_number_detail_keyboard(nid))
+            await safe_edit(query, f"Inbox - {flag} {country}\nPhone: {phone}\n\nNo OTPs yet\n\nUse {phone} on any service, request verification, then check back!", reply_markup=build_number_detail_keyboard(nid))
             return
-
         text = f"Inbox - {flag} {country}\nPhone: {phone}\n" + "-"*20 + "\n"
         count = 0
         for m in msgs:
@@ -700,35 +701,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         c.execute("SELECT COUNT(*) FROM messages WHERE source='shelex_free'"); shelex = c.fetchone()[0]
         c.execute("SELECT COUNT(*) FROM messages WHERE source='twilio'"); twilio = c.fetchone()[0]
         conn.close()
-        msg = (
-            f"Statistics\n"
-            f"Users: {users}\n"
-            f"Numbers: {total_nums} total, {active} active\n"
-            f"Messages: {total_msgs}\n"
-            f"Shelex (free): {shelex}\n"
-            f"Twilio (real): {twilio}\n"
-            f"Countries: {len(COUNTRIES)}\n"
-            f"Hosted on: Render (free)\n"
-            f"Webhook URL: https://cyber-x-otp.onrender.com/twilio-sms"
-        )
-        await safe_edit(query, msg, reply_markup=build_main_keyboard())
+        await safe_edit(query, 
+            f"Statistics\nUsers: {users}\nNumbers: {total_nums} total, {active} active\nMessages: {total_msgs}\nShelex (free): {shelex}\nTwilio (real): {twilio}\nCountries: {len(COUNTRIES)}",
+            reply_markup=build_main_keyboard())
 
     elif data == "how_otp":
-        msg = (
-            "How Real OTP Reception Works\n\n"
-            "Free Mode (Shelex)\n"
-            "Bot polls free public SMS websites every 30s.\n"
-            "Numbers are public - OTPs visible to others\n\n"
-            "Real Mode (Twilio)\n"
-            "1. Sign up at twilio.com ($20 free credit)\n"
-            "2. Buy a phone number (~$1)\n"
-            "3. Set webhook to:\n"
-            "   https://cyber-x-otp.onrender.com/twilio-sms\n"
-            "4. All SMS forward to your bot instantly!\n"
-            "Private, instant, works with any service\n\n"
-            "For education only"
-        )
-        await safe_edit(query, msg, reply_markup=build_main_keyboard())
+        await safe_edit(query,
+            "How Real OTP Reception Works\n\nFree Mode (Shelex)\nBot polls free public SMS websites every 30s.\nNumbers are public - OTPs visible to others\n\nReal Mode (Twilio)\n1. Sign up at twilio.com ($20 free credit)\n2. Buy a phone number (~$1)\n3. Set webhook to:\n   https://cyber-x-otp.onrender.com/twilio-sms\n4. All SMS forward to your bot instantly!\nPrivate, instant, works with any service\n\nFor education only",
+            reply_markup=build_main_keyboard())
 
     elif data == "noop": pass
 
@@ -747,9 +727,7 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             phone, display = generate_number_for_country(cd)
             num_id = save_number_to_db(user_id, name, flag, dial, phone, display)
             save_otp_message(num_id, phone, name, "SYSTEM", "Activated!", "", "SYSTEM", "system")
-            await update.message.reply_text(
-                f"{flag} {name}\nPhone: {phone}\n{display}",
-                reply_markup=build_number_detail_keyboard(num_id))
+            await update.message.reply_text(f"{flag} {name}\nPhone: {phone}\n{display}", reply_markup=build_number_detail_keyboard(num_id))
             return
         elif len(matching) <= 12:
             kb = []
@@ -762,35 +740,17 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "CYBERX Bot - Help\n\n"
-        "Commands:\n"
-        "/start - Start bot\n"
-        "/getnumber - Get a number\n"
-        "/mynumbers - Your numbers\n"
-        "/help - This help\n\n"
-        "OTP Sources:\n"
-        "Shelex (free): polls every 30s\n"
-        "Twilio (real): via webhook URL\n\n"
-        f"Countries: {len(COUNTRIES)}"
+        "CYBERX Bot - Help\n\nCommands:\n/start - Start bot\n/getnumber - Get a number\n/mynumbers - Your numbers\n/help - This help\n\nOTP Sources:\nShelex (free): polls every 30s\nTwilio (real): via webhook URL\n\nCountries: {len(COUNTRIES)}"
     )
 
 # ================================================================
 # 🚀 MAIN
 # ================================================================
 
-async def delete_webhook_on_start(app):
-    """Delete any existing webhook before polling starts — prevents Conflict errors."""
-    try:
-        await app.bot.delete_webhook(drop_pending_updates=True)
-        print("[OK] Webhook deleted — starting fresh polling")
-    except Exception as e:
-        print(f"[!] Webhook delete warning (non-fatal): {e}")
-
 def main():
     print("="*55)
     print("  CYBERX VIRTUAL NUMBER BOT - RENDER EDITION")
     print(f"  {len(COUNTRIES)} countries  Port 10000  4min health ping")
-    print("  https://cyberx_otp.onrender.com")
     print("="*55)
 
     init_db()
@@ -800,22 +760,18 @@ def main():
         sys.exit(1)
 
     render_url = os.environ.get("RENDER_EXTERNAL_URL", "https://cyberx_otp.onrender.com")
-    if render_url:
-        print(f"[OK] Render URL: {render_url}")
-    else:
-        print("[!] No RENDER_EXTERNAL_URL set")
 
-    # Start Flask (for webhook + health)
+    # Start Flask
     flask_thread = threading.Thread(target=start_flask, daemon=True)
     flask_thread.start()
     print("[OK] Flask running on port 10000")
 
-    # Start health ping (every 4 minutes)
+    # Start health ping
     ping_thread = threading.Thread(target=health_ping, daemon=True)
     ping_thread.start()
     print("[OK] Health ping every 4 minutes")
 
-    # Build the Telegram Application
+    # Build Telegram app
     app = Application.builder().token(BOT_TOKEN).build()
 
     # Add handlers
@@ -824,25 +780,17 @@ def main():
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
 
-    # Start Shelex polling in its own thread + event loop
+    # Start Shelex polling in its own thread
     shelex_loop = asyncio.new_event_loop()
     shelex_thread = threading.Thread(target=shelex_poll_numbers, args=(app, shelex_loop), daemon=True)
     shelex_thread.start()
 
     print(f"[OK] Bot ready! {len(COUNTRIES)} countries.")
     print(f"[OK] Twilio webhook: {render_url}/twilio-sms")
-    print(f"[OK] Health: {render_url}/health")
 
-    # KEY FIX: run_polling with drop_pending_updates=True
-    # This tells Telegram to:
-    #   1. Delete any existing webhook first
-    #   2. Drop any queued pending updates
-    #   3. Only THEN start polling — avoids the Conflict error
+    # Run polling — drop_pending_updates kills stale connections
     try:
-        app.run_polling(
-            allowed_updates=Update.ALL_TYPES,
-            drop_pending_updates=True,  # CRITICAL: kills stale webhook/polling connections
-        )
+        app.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
     except KeyboardInterrupt:
         print("\n[!] Shutting down...")
     except Exception as e:
