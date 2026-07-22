@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: cyberx-otp
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python skybot.py
+    envVars:
+      - key: RENDER_EXTERNAL_URL
+        value: https://cyberx_otp.onrender.com
