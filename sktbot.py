@@ -26,10 +26,12 @@ import requests
 import os
 import sys
 import signal
+import traceback
+import logging
 from datetime import datetime
 from flask import Flask, request, jsonify
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Bot
-from telegram.error import BadRequest
+from telegram.error import BadRequest, Conflict
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 
 # ================================================================
@@ -38,6 +40,16 @@ from telegram.ext import Application, CommandHandler, CallbackQueryHandler, Mess
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "8580418434"))
+
+# ================================================================
+# 📝 Logging — Helps debug issues on Render
+# ================================================================
+
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO,
+)
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 # ================================================================
 # ✨ Markdown Escaping Helper
@@ -55,7 +67,7 @@ def esc(t):
 
 COUNTRIES = [
     ("Algeria", "\U0001f1e9\U0001f1ff", "+213", (2, 3, 6, 11)),
-    ("Angola", "\U0001f1e6\0001f1f4", "+244", (3, 3, 6, 12)),
+    ("Angola", "\U0001f1e6\U0001f1f4", "+244", (3, 3, 6, 12)),
     ("Benin", "\U0001f1e7\U0001f1ef", "+229", (3, 3, 6, 12)),
     ("Botswana", "\U0001f1e7\U0001f1fc", "+267", (3, 3, 6, 12)),
     ("Burkina Faso", "\U0001f1e7\U0001f1eb", "+226", (3, 3, 6, 12)),
@@ -113,7 +125,6 @@ COUNTRIES = [
     ("Antigua & Barbuda", "\U0001f1e6\U0001f1ec", "+1-268", (3, 3, 6, 12)),
     ("Argentina", "\U0001f1e6\U0001f1f7", "+54", (2, 3, 6, 12)),
     ("Bahamas", "\U0001f1e7\U0001f1f8", "+1-242", (3, 3, 6, 12)),
-    # FIXED: Barbados flag — U+1F1E7 (Regional Indicator B) × 2, 8 hex digits each
     ("Barbados", "\U0001F1E7\U0001F1E7", "+1-246", (3, 3, 6, 12)),
     ("Belize", "\U0001f1e7\U0001f1ff", "+501", (3, 3, 6, 12)),
     ("Bolivia", "\U0001f1e7\U0001f1f4", "+591", (3, 3, 6, 12)),
@@ -236,7 +247,7 @@ COUNTRIES = [
     ("San Marino", "\U0001f1f8\U0001f1f2", "+378", (3, 3, 6, 12)),
     ("Serbia", "\U0001f1f7\U0001f1f8", "+381", (3, 3, 6, 12)),
     ("Slovakia", "\U0001f1f8\U0001f1f0", "+421", (3, 3, 6, 12)),
-    ("Slovenia", "\U0001f1f8\0001f1ee", "+386", (3, 3, 6, 12)),
+    ("Slovenia", "\U0001f1f8\U0001f1ee", "+386", (3, 3, 6, 12)),
     ("Spain", "\U0001f1ea\U0001f1f8", "+34", (3, 3, 6, 12)),
     ("Sweden", "\U0001f1f8\U0001f1ea", "+46", (3, 3, 6, 12)),
     ("Switzerland", "\U0001f1e8\U0001f1ed", "+41", (3, 3, 6, 12)),
@@ -362,30 +373,13 @@ def extract_otp(text):
         r'(?:code|OTP|verification|password|login|pin|token|auth)[:\s]*(\d{4,8})',
         r'(\d{4,8})(?:\s*(?:is|\.|$))',
     ]
-
-    # 4-8 digit codes
     nums = re.findall(r'\b(\d{4,8})\b', text)
     if nums:
-        for n in nums:
-            pass
         return nums[0]
-
-    # Try more specific patterns
     for pat in patterns:
         m = re.search(pat, text, re.IGNORECASE)
         if m: return m.group(1) if m.lastindex else m.group(0)
-
     return ""
-
-def check_service_registration(phone):
-    """Check if a number appears on common services"""
-    services = []
-    patterns = [("WhatsApp", r"whatsapp"), ("Telegram", r"telegram"), ("Google", r"google"),
-                ("Facebook", r"facebook|fb"), ("Instagram", r"instagram"), ("Twitter", r"twitter|x\.com"),
-                ("Amazon", r"amazon"), ("Apple", r"apple"), ("Microsoft", r"microsoft|outlook"),
-                ("TikTok", r"tiktok"), ("Snapchat", r"snapchat"), ("Signal", r"signal"),
-                ("Discord", r"discord"), ("Uber", r"uber"), ("PayPal", r"paypal")]
-    return services
 
 # ================================================================
 # 🌐 SHELEX SMS POLLING
@@ -396,22 +390,10 @@ SHELEX_SOURCES = [
     {"url": "https://shelex.com/sms/{phone}", "country": "United Kingdom", "name": "receive-sms-online"},
 ]
 
-COUNTRY_TO_SHELEX = {}
-for c in COUNTRIES:
-    name = c[0]
-    if name in ["United States", "United Kingdom", "Canada", "Australia", "India", "Germany", "France", "Spain"]:
-        COUNTRY_TO_SHELEX[name] = "shelex.com"
-
 def shelex_poll_numbers(app, loop):
-    """Poll Shelex for OTPs on active numbers — runs in its own thread.
-    
-    Creates its own event loop in this thread so it never pollutes the main thread.
-    """
+    """Poll Shelex for OTPs on active numbers — runs in its own thread."""
     import asyncio as aio
-
-    # Set the loop for THIS thread only — safe because it's a daemon thread
     aio.set_event_loop(loop)
-
     print("[Shelex] Poller started (30s interval)")
 
     async def poll_once():
@@ -422,39 +404,34 @@ def shelex_poll_numbers(app, loop):
         conn.close()
 
         for num_id, phone, country in numbers:
-            try:
-                for src in SHELEX_SOURCES:
-                    url = src["url"].format(phone=phone[-10:])
-                    try:
-                        resp = requests.get(url, timeout=10)
-                        if resp.status_code == 200:
-                            text = resp.text
-                            otp = extract_otp(text)
-                            if otp:
-                                msg = text[:200]
-                                save_otp_message(num_id, phone, country, f"Shelex/{src['name']}", msg, otp, "Shelex", "shelex_free")
-                                print(f"[Shelex] OTP found: {phone} -> {otp}")
-
-                                conn2 = sqlite3.connect(DB_FILE)
-                                c2 = conn2.cursor()
-                                c2.execute("SELECT user_id FROM assigned_numbers WHERE id=?", (num_id,))
-                                row = c2.fetchone()
-                                conn2.close()
-
-                                if row:
-                                    try:
-                                        async with app:
-                                            await app.bot.send_message(
-                                                chat_id=row[0],
-                                                text=f"\U0001f310 **OTP Received!**\n\U0001f4de `{esc(phone)}`\n\U0001f3f7 {esc(country)}\n\U0001f511 `{esc(otp)}`",
-                                                parse_mode="Markdown"
-                                            )
-                                    except:
-                                        pass
-                    except:
-                        pass
-            except:
-                pass
+            for src in SHELEX_SOURCES:
+                url = src["url"].format(phone=phone[-10:])
+                try:
+                    resp = requests.get(url, timeout=10)
+                    if resp.status_code == 200:
+                        text = resp.text
+                        otp = extract_otp(text)
+                        if otp:
+                            msg = text[:200]
+                            save_otp_message(num_id, phone, country, f"Shelex/{src['name']}", msg, otp, "Shelex", "shelex_free")
+                            print(f"[Shelex] OTP found: {phone} -> {otp}")
+                            conn2 = sqlite3.connect(DB_FILE)
+                            c2 = conn2.cursor()
+                            c2.execute("SELECT user_id FROM assigned_numbers WHERE id=?", (num_id,))
+                            row = c2.fetchone()
+                            conn2.close()
+                            if row:
+                                try:
+                                    async with app:
+                                        await app.bot.send_message(
+                                            chat_id=row[0],
+                                            text=f"\U0001f310 **OTP Received!**\n\U0001f4de `{esc(phone)}`\n\U0001f3f7 {esc(country)}\n\U0001f511 `{esc(otp)}`",
+                                            parse_mode="Markdown"
+                                        )
+                                except:
+                                    pass
+                except:
+                    pass
 
     async def poll_loop():
         while True:
@@ -504,7 +481,6 @@ def twilio_webhook():
         return jsonify({"error": "no sender"}), 400
 
     phone = sender.replace("+", "").replace(" ", "").replace("-", "")
-
     otp = extract_otp(body)
     service = "Twilio"
 
@@ -522,7 +498,6 @@ def twilio_webhook():
     if row:
         num_id, user_id, country = row
         mid, total = save_otp_message(num_id, phone, country, sender, body, otp, service, "twilio")
-
         if user_id and otp:
             try:
                 text = f"\U0001f4e1 **Real OTP!**\n\U0001f4de `{esc(phone)}`\n\U0001f511 `{esc(otp)}`\n\U0001f4c5 {esc(service)}"
@@ -535,7 +510,6 @@ def twilio_webhook():
                 pass
 
     conn.close()
-
     return jsonify({"status": "received", "otp": otp, "phone": phone})
 
 @flask_app.route("/incoming-sms", methods=["POST"])
@@ -608,7 +582,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     render_url = os.environ.get("RENDER_EXTERNAL_URL", "https://cyberx_otp.onrender.com")
 
-    # FIXED: Use \\[ instead of \[ to avoid SyntaxWarning on Python 3.14+
     msg = (
         "\\[CYBERX Bot\\]\n\n"
         "\\[207 countries\\] worldwide\n\n"
@@ -649,7 +622,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             phone, display = generate_number_for_country(COUNTRIES[idx])
             num_id = save_number_to_db(user_id, name, flag, dial_code, phone, display)
             save_otp_message(num_id, phone, name, "SYSTEM", "Number activated!", "", "SYSTEM", "system")
-
             msg = (
                 f"Number Generated!\n\n"
                 f"{flag} {name}\n"
@@ -691,7 +663,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         country, flag, phone, display = row
         msgs = get_number_messages(nid, 15)
         has_real = any(m[1]!="SYSTEM" for m in msgs) if msgs else False
-
         if not has_real:
             conn.close()
             msg = f"Inbox - {flag} {country}\nPhone: {phone}\n\nNo OTPs yet\n\nUse {phone} on any service, request verification, then check back!"
@@ -729,7 +700,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         c.execute("SELECT COUNT(*) FROM messages WHERE source='shelex_free'"); shelex = c.fetchone()[0]
         c.execute("SELECT COUNT(*) FROM messages WHERE source='twilio'"); twilio = c.fetchone()[0]
         conn.close()
-
         msg = (
             f"Statistics\n"
             f"Users: {users}\n"
@@ -765,22 +735,18 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     user_id = update.effective_user.id
-
     if text in ("/getnumber", "\U0001f4f1 Get Number"):
         keyboard, tp = get_country_keyboard(0)
         await update.message.reply_text(f"Select Country ({len(COUNTRIES)} countries)", reply_markup=keyboard)
         return
-
     matching = [(i, c) for i, c in enumerate(COUNTRIES) if text.lower() in c[0].lower()]
     if not matching: matching = [(i, c) for i, c in enumerate(COUNTRIES) if text in c[2]]
-
     if matching:
         if len(matching) == 1:
             idx, cd = matching[0]; name, flag, dial, fmt = cd
             phone, display = generate_number_for_country(cd)
             num_id = save_number_to_db(user_id, name, flag, dial, phone, display)
             save_otp_message(num_id, phone, name, "SYSTEM", "Activated!", "", "SYSTEM", "system")
-
             await update.message.reply_text(
                 f"{flag} {name}\nPhone: {phone}\n{display}",
                 reply_markup=build_number_detail_keyboard(num_id))
@@ -812,6 +778,14 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # 🚀 MAIN
 # ================================================================
 
+async def delete_webhook_on_start(app):
+    """Delete any existing webhook before polling starts — prevents Conflict errors."""
+    try:
+        await app.bot.delete_webhook(drop_pending_updates=True)
+        print("[OK] Webhook deleted — starting fresh polling")
+    except Exception as e:
+        print(f"[!] Webhook delete warning (non-fatal): {e}")
+
 def main():
     print("="*55)
     print("  CYBERX VIRTUAL NUMBER BOT - RENDER EDITION")
@@ -841,12 +815,8 @@ def main():
     ping_thread.start()
     print("[OK] Health ping every 4 minutes")
 
-    print("STEP 1")
-
-    # FIXED: Application.builder().build() is SYNCHRONOUS — no need for asyncio.run()
+    # Build the Telegram Application
     app = Application.builder().token(BOT_TOKEN).build()
-
-    print("STEP 2")
 
     # Add handlers
     app.add_handler(CommandHandler("start", start))
@@ -854,30 +824,30 @@ def main():
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
 
-    # FIXED: Do NOT set the Shelex loop on the main thread — that pollutes the event loop
-    # and causes "Cannot close a running event loop" when run_polling() runs.
-    # The thread function calls set_event_loop() in its own thread context.
+    # Start Shelex polling in its own thread + event loop
     shelex_loop = asyncio.new_event_loop()
-    # asyncio.set_event_loop(shelex_loop)  <-- REMOVED: was the root cause of the crash
     shelex_thread = threading.Thread(target=shelex_poll_numbers, args=(app, shelex_loop), daemon=True)
     shelex_thread.start()
 
-    print("STEP 3")
-    print(f"[OK] Bot running! {len(COUNTRIES)} countries.")
+    print(f"[OK] Bot ready! {len(COUNTRIES)} countries.")
     print(f"[OK] Twilio webhook: {render_url}/twilio-sms")
     print(f"[OK] Health: {render_url}/health")
-    print("STEP 4")
 
-    # run_polling() is synchronous — manages own event loop internally
+    # KEY FIX: run_polling with drop_pending_updates=True
+    # This tells Telegram to:
+    #   1. Delete any existing webhook first
+    #   2. Drop any queued pending updates
+    #   3. Only THEN start polling — avoids the Conflict error
     try:
-        app.run_polling(allowed_updates=Update.ALL_TYPES)
+        app.run_polling(
+            allowed_updates=Update.ALL_TYPES,
+            drop_pending_updates=True,  # CRITICAL: kills stale webhook/polling connections
+        )
     except KeyboardInterrupt:
         print("\n[!] Shutting down...")
     except Exception as e:
         print(f"\n[!] Error: {e}")
         traceback.print_exc()
-
-    print("STEP 5")
 
 if __name__ == "__main__":
     main()
