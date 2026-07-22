@@ -24,6 +24,7 @@ import threading
 import asyncio
 import requests
 import os
+import sys
 from datetime import datetime
 from flask import Flask, request, jsonify
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -31,11 +32,11 @@ from telegram.error import BadRequest
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 
 # ================================================================
-# 🔧 ONLY TWO THINGS TO EDIT
+# 🔧 ENVIRONMENT VARIABLES — Set these on Render Dashboard
 # ================================================================
 
-BOT_TOKEN = "YOUR_BOT_TOKEN"          # From @BotFather
-ADMIN_ID = 8580418434                   # Your Telegram ID
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+ADMIN_ID = int(os.getenv("ADMIN_ID", "8580418434"))
 
 # ================================================================
 # 🌍 200+ COUNTRIES — EVERY COUNTRY IN THE WORLD
@@ -981,8 +982,8 @@ def main():
     
     init_db()
     
-    if BOT_TOKEN == "YOUR_BOT_TOKEN":
-        print("\n[!] ERROR: Set your BOT_TOKEN!")
+    if not BOT_TOKEN:
+        print("\n[!] ERROR: BOT_TOKEN environment variable is missing!")
         sys.exit(1)
     
     render_url = os.environ.get("RENDER_EXTERNAL_URL", "https://cyberx_otp.onrender.com")
@@ -1012,7 +1013,7 @@ def main():
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
     
-    # Start Shelex polling — FIXED LINE
+    # Start Shelex polling
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     shelex_thread = threading.Thread(target=shelex_poll_numbers, args=(app, loop), daemon=True)
