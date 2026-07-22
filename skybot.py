@@ -34,7 +34,7 @@ from telegram.ext import Application, CommandHandler, CallbackQueryHandler, Mess
 # 🔧 ONLY TWO THINGS TO EDIT
 # ================================================================
 
-BOT_TOKEN = "8532550542:AAFKrlfVlYHRr_0bHocCbacCkzdnyy3LwLM"          # From @BotFather
+BOT_TOKEN = "YOUR_BOT_TOKEN"          # From @BotFather
 ADMIN_ID = 8580418434                   # Your Telegram ID
 
 # ================================================================
@@ -1012,8 +1012,9 @@ def main():
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
     
-    # Start Shelex polling
-    loop = asyncio.get_event_loop()
+    # Start Shelex polling — FIXED LINE
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
     shelex_thread = threading.Thread(target=shelex_poll_numbers, args=(app, loop), daemon=True)
     shelex_thread.start()
     print(f"[✓] Shelex polling every 30s")
