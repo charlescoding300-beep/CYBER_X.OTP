@@ -25,7 +25,7 @@ import asyncio
 import requests
 import os
 import sys
-import traceback
+import signal
 from datetime import datetime
 from flask import Flask, request, jsonify
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Bot
@@ -55,7 +55,7 @@ def esc(t):
 
 COUNTRIES = [
     ("Algeria", "\U0001f1e9\U0001f1ff", "+213", (2, 3, 6, 11)),
-    ("Angola", "\U0001f1e6\U0001f1f4", "+244", (3, 3, 6, 12)),
+    ("Angola", "\U0001f1e6\0001f1f4", "+244", (3, 3, 6, 12)),
     ("Benin", "\U0001f1e7\U0001f1ef", "+229", (3, 3, 6, 12)),
     ("Botswana", "\U0001f1e7\U0001f1fc", "+267", (3, 3, 6, 12)),
     ("Burkina Faso", "\U0001f1e7\U0001f1eb", "+226", (3, 3, 6, 12)),
@@ -113,7 +113,7 @@ COUNTRIES = [
     ("Antigua & Barbuda", "\U0001f1e6\U0001f1ec", "+1-268", (3, 3, 6, 12)),
     ("Argentina", "\U0001f1e6\U0001f1f7", "+54", (2, 3, 6, 12)),
     ("Bahamas", "\U0001f1e7\U0001f1f8", "+1-242", (3, 3, 6, 12)),
-    # FIXED: Barbados flag — U+1F1E7 (Regional Indicator B) × 2
+    # FIXED: Barbados flag — U+1F1E7 (Regional Indicator B) × 2, 8 hex digits each
     ("Barbados", "\U0001F1E7\U0001F1E7", "+1-246", (3, 3, 6, 12)),
     ("Belize", "\U0001f1e7\U0001f1ff", "+501", (3, 3, 6, 12)),
     ("Bolivia", "\U0001f1e7\U0001f1f4", "+591", (3, 3, 6, 12)),
@@ -236,7 +236,7 @@ COUNTRIES = [
     ("San Marino", "\U0001f1f8\U0001f1f2", "+378", (3, 3, 6, 12)),
     ("Serbia", "\U0001f1f7\U0001f1f8", "+381", (3, 3, 6, 12)),
     ("Slovakia", "\U0001f1f8\U0001f1f0", "+421", (3, 3, 6, 12)),
-    ("Slovenia", "\U0001f1f8\U0001f1ee", "+386", (3, 3, 6, 12)),
+    ("Slovenia", "\U0001f1f8\0001f1ee", "+386", (3, 3, 6, 12)),
     ("Spain", "\U0001f1ea\U0001f1f8", "+34", (3, 3, 6, 12)),
     ("Sweden", "\U0001f1f8\U0001f1ea", "+46", (3, 3, 6, 12)),
     ("Switzerland", "\U0001f1e8\U0001f1ed", "+41", (3, 3, 6, 12)),
@@ -367,7 +367,6 @@ def extract_otp(text):
     nums = re.findall(r'\b(\d{4,8})\b', text)
     if nums:
         for n in nums:
-            # Likely OTP if standalone number
             pass
         return nums[0]
 
@@ -404,9 +403,13 @@ for c in COUNTRIES:
         COUNTRY_TO_SHELEX[name] = "shelex.com"
 
 def shelex_poll_numbers(app, loop):
-    """Poll Shelex for OTPs on active numbers — runs in its own thread."""
+    """Poll Shelex for OTPs on active numbers — runs in its own thread.
+    
+    Creates its own event loop in this thread so it never pollutes the main thread.
+    """
     import asyncio as aio
 
+    # Set the loop for THIS thread only — safe because it's a daemon thread
     aio.set_event_loop(loop)
 
     print("[Shelex] Poller started (30s interval)")
@@ -420,7 +423,6 @@ def shelex_poll_numbers(app, loop):
 
         for num_id, phone, country in numbers:
             try:
-                # Try Shelex sources
                 for src in SHELEX_SOURCES:
                     url = src["url"].format(phone=phone[-10:])
                     try:
@@ -433,7 +435,6 @@ def shelex_poll_numbers(app, loop):
                                 save_otp_message(num_id, phone, country, f"Shelex/{src['name']}", msg, otp, "Shelex", "shelex_free")
                                 print(f"[Shelex] OTP found: {phone} -> {otp}")
 
-                                # Send to Telegram user
                                 conn2 = sqlite3.connect(DB_FILE)
                                 c2 = conn2.cursor()
                                 c2.execute("SELECT user_id FROM assigned_numbers WHERE id=?", (num_id,))
@@ -443,7 +444,6 @@ def shelex_poll_numbers(app, loop):
                                 if row:
                                     try:
                                         async with app:
-                                            # FIXED: use country instead of undefined service_name
                                             await app.bot.send_message(
                                                 chat_id=row[0],
                                                 text=f"\U0001f310 **OTP Received!**\n\U0001f4de `{esc(phone)}`\n\U0001f3f7 {esc(country)}\n\U0001f511 `{esc(otp)}`",
@@ -503,7 +503,6 @@ def twilio_webhook():
     if not sender:
         return jsonify({"error": "no sender"}), 400
 
-    # Clean phone number
     phone = sender.replace("+", "").replace(" ", "").replace("-", "")
 
     otp = extract_otp(body)
@@ -512,13 +511,11 @@ def twilio_webhook():
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
 
-    # Try to find a matching number
     c.execute("SELECT id, user_id, country FROM assigned_numbers WHERE REPLACE(REPLACE(phone_number,'+',''),' ','') LIKE ? AND status='active' LIMIT 1",
               (f"%{phone[-10:]}%",))
     row = c.fetchone()
 
     if not row:
-        # Assign to any user? No — just log it
         c.execute("SELECT id, user_id, country FROM assigned_numbers WHERE status='active' ORDER BY RANDOM() LIMIT 1")
         row = c.fetchone()
 
@@ -528,7 +525,6 @@ def twilio_webhook():
 
         if user_id and otp:
             try:
-                # Forward OTP to user via Telegram
                 text = f"\U0001f4e1 **Real OTP!**\n\U0001f4de `{esc(phone)}`\n\U0001f511 `{esc(otp)}`\n\U0001f4c5 {esc(service)}"
                 bot = Bot(token=BOT_TOKEN)
                 try:
@@ -612,9 +608,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     render_url = os.environ.get("RENDER_EXTERNAL_URL", "https://cyberx_otp.onrender.com")
 
+    # FIXED: Use \\[ instead of \[ to avoid SyntaxWarning on Python 3.14+
     msg = (
-        "\[CYBERX Bot\]\n\n"
-        "\[207 countries\] worldwide\n\n"
+        "\\[CYBERX Bot\\]\n\n"
+        "\\[207 countries\\] worldwide\n\n"
         "How to get real OTPs:\n"
         "1. Get a number from the bot\n"
         "2. Use it on any service\n"
@@ -846,11 +843,8 @@ def main():
 
     print("STEP 1")
 
-    # Build Telegram app inside a temporary event loop (Python 3.14 compat)
-    async def _build_app():
-        return Application.builder().token(BOT_TOKEN).build()
-
-    app = asyncio.run(_build_app())
+    # FIXED: Application.builder().build() is SYNCHRONOUS — no need for asyncio.run()
+    app = Application.builder().token(BOT_TOKEN).build()
 
     print("STEP 2")
 
@@ -860,9 +854,11 @@ def main():
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
 
-    # Start Shelex polling in its own thread + event loop
+    # FIXED: Do NOT set the Shelex loop on the main thread — that pollutes the event loop
+    # and causes "Cannot close a running event loop" when run_polling() runs.
+    # The thread function calls set_event_loop() in its own thread context.
     shelex_loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(shelex_loop)
+    # asyncio.set_event_loop(shelex_loop)  <-- REMOVED: was the root cause of the crash
     shelex_thread = threading.Thread(target=shelex_poll_numbers, args=(app, shelex_loop), daemon=True)
     shelex_thread.start()
 
@@ -872,13 +868,14 @@ def main():
     print(f"[OK] Health: {render_url}/health")
     print("STEP 4")
 
-    # run_polling() is synchronous - manages own event loop internally
+    # run_polling() is synchronous — manages own event loop internally
     try:
         app.run_polling(allowed_updates=Update.ALL_TYPES)
     except KeyboardInterrupt:
         print("\n[!] Shutting down...")
     except Exception as e:
         print(f"\n[!] Error: {e}")
+        traceback.print_exc()
 
     print("STEP 5")
 
