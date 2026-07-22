@@ -25,6 +25,7 @@ import asyncio
 import requests
 import os
 import sys
+import traceback
 from datetime import datetime
 from flask import Flask, request, jsonify
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -1005,9 +1006,12 @@ def main():
     # Start Telegram bot
     print("STEP 1")
     
-    app = Application.builder().token(BOT_TOKEN).build()
-    
-    print("STEP 2")
+    try:
+        app = Application.builder().token(BOT_TOKEN).build()
+        print("STEP 2")
+    except Exception as e:
+        traceback.print_exc()
+        raise
     
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("getnumber", text_handler))
