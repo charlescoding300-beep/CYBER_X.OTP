@@ -974,44 +974,6 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # 🚀 MAIN
 # ================================================================
 
-async def async_main():
-    """Async main — Telegram bot needs an async context on Python 3.14"""
-    render_url = os.environ.get("RENDER_EXTERNAL_URL", "https://cyberx_otp.onrender.com")
-    
-    # Build Application inside async context (fixes hang on Python 3.14)
-    print("STEP 1")
-    app = Application.builder().token(BOT_TOKEN).build()
-    print("STEP 2")
-    
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("getnumber", text_handler))
-    app.add_handler(CommandHandler("mynumbers", button_handler))
-    app.add_handler(CommandHandler("inject", inject_command))
-    app.add_handler(CommandHandler("seturl", seturl_command))
-    app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(CallbackQueryHandler(button_handler))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
-    
-    # Start Shelex polling with the async loop we're already in
-    loop = asyncio.get_running_loop()
-    shelex_thread = threading.Thread(target=shelex_poll_numbers, args=(app, loop), daemon=True)
-    shelex_thread.start()
-    
-    print("STEP 3")
-    print(f"[✓] Bot running! {len(COUNTRIES)} countries.")
-    print(f"[✓] Twilio webhook: {render_url}/twilio-sms")
-    print(f"[✓] Health: {render_url}/health")
-    print(f"[✓] Press Ctrl+C to stop.\n")
-    
-    print("STEP 4")
-    try:
-        await app.run_polling(allowed_updates=Update.ALL_TYPES)
-    except KeyboardInterrupt:
-        print("\n[!] Shutting down...")
-    except Exception as e:
-        print(f"\n[!] Error: {e}")
-    print("STEP 5")
-
 def main():
     print("="*55)
     print("  📱 CYBERX VIRTUAL NUMBER BOT — RENDER EDITION")
@@ -1041,9 +1003,54 @@ def main():
     ping_thread.start()
     print(f"[✓] Health ping every 4 minutes")
     
-    # Run Telegram bot inside asyncio.run() — fixes the .build() hang
-    print("[✓] Starting Telegram bot...")
-    asyncio.run(async_main())
+    # ════════════════════════════════════════════════════════════════
+    # Build Telegram app INSIDE a temporary event loop
+    # (Required by python-telegram-bot 22.x on Python 3.14)
+    # ════════════════════════════════════════════════════════════════
+    print("STEP 1")
+    
+    async def _build_app():
+        return Application.builder().token(BOT_TOKEN).build()
+    
+    app = asyncio.run(_build_app())
+    
+    print("STEP 2")
+    
+    # Add all handlers (synchronous — safe to call outside async context)
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("getnumber", text_handler))
+    app.add_handler(CommandHandler("mynumbers", button_handler))
+    app.add_handler(CommandHandler("inject", inject_command))
+    app.add_handler(CommandHandler("seturl", seturl_command))
+    app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CallbackQueryHandler(button_handler))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
+    
+    # Start Shelex polling in its own thread + event loop
+    shelex_loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(shelex_loop)
+    shelex_thread = threading.Thread(target=shelex_poll_numbers, args=(app, shelex_loop), daemon=True)
+    shelex_thread.start()
+    
+    print("STEP 3")
+    print(f"[✓] Bot running! {len(COUNTRIES)} countries.")
+    print(f"[✓] Twilio webhook: {render_url}/twilio-sms")
+    print(f"[✓] Health: {render_url}/health")
+    print(f"[✓] Press Ctrl+C to stop.\n")
+    
+    print("STEP 4")
+    
+    # run_polling() is SYNCHRONOUS — it manages its own event loop internally.
+    # Do NOT await it, do NOT wrap in asyncio.run().
+    # This blocks until the bot is stopped (Ctrl+C or SIGTERM).
+    try:
+        app.run_polling(allowed_updates=Update.ALL_TYPES)
+    except KeyboardInterrupt:
+        print("\n[!] Shutting down...")
+    except Exception as e:
+        print(f"\n[!] Error: {e}")
+    
+    print("STEP 5")
 
 if __name__ == "__main__":
     main()
