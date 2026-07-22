@@ -1003,7 +1003,12 @@ def main():
     print(f"[✓] Health ping every 4 minutes")
     
     # Start Telegram bot
+    print("STEP 1")
+    
     app = Application.builder().token(BOT_TOKEN).build()
+    
+    print("STEP 2")
+    
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("getnumber", text_handler))
     app.add_handler(CommandHandler("mynumbers", button_handler))
@@ -1018,12 +1023,15 @@ def main():
     asyncio.set_event_loop(loop)
     shelex_thread = threading.Thread(target=shelex_poll_numbers, args=(app, loop), daemon=True)
     shelex_thread.start()
-    print(f"[✓] Shelex polling every 30s")
+    
+    print("STEP 3")
     
     print(f"[✓] Bot running! {len(COUNTRIES)} countries.")
     print(f"[✓] Twilio webhook: {render_url}/twilio-sms")
     print(f"[✓] Health: {render_url}/health")
     print(f"[✓] Press Ctrl+C to stop.\n")
+    
+    print("STEP 4")
     
     try:
         app.run_polling(allowed_updates=Update.ALL_TYPES)
@@ -1031,6 +1039,8 @@ def main():
         print("\n[!] Shutting down...")
     except Exception as e:
         print(f"\n[!] Error: {e}")
+    
+    print("STEP 5")
 
 if __name__ == "__main__":
     main()
