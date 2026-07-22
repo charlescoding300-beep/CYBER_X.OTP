@@ -28,7 +28,7 @@ import sys
 import traceback
 from datetime import datetime
 from flask import Flask, request, jsonify
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Bot
 from telegram.error import BadRequest
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 
@@ -113,7 +113,8 @@ COUNTRIES = [
     ("Antigua & Barbuda", "\U0001f1e6\U0001f1ec", "+1-268", (3, 3, 6, 12)),
     ("Argentina", "\U0001f1e6\U0001f1f7", "+54", (2, 3, 6, 12)),
     ("Bahamas", "\U0001f1e7\U0001f1f8", "+1-242", (3, 3, 6, 12)),
-    ("Barbados", "\U000U+1f1e7\U0001f1e7", "+1-246", (3, 3, 6, 12)),
+    # FIXED: Barbados flag — U+1F1E7 (Regional Indicator B) × 2
+    ("Barbados", "\U0001F1E7\U0001F1E7", "+1-246", (3, 3, 6, 12)),
     ("Belize", "\U0001f1e7\U0001f1ff", "+501", (3, 3, 6, 12)),
     ("Bolivia", "\U0001f1e7\U0001f1f4", "+591", (3, 3, 6, 12)),
     ("Brazil", "\U0001f1e7\U0001f1f7", "+55", (2, 3, 6, 12)),
@@ -288,13 +289,13 @@ def generate_number_for_country(country_tuple):
     name, flag, dial_code, fmt = country_tuple
     digits_needed = 10 - len(dial_code.replace("+", "").replace("-", "").split("-")[0]) if "-" in dial_code else 10 - len(dial_code.replace("+", ""))
     digits_needed = max(digits_needed, 7)
-    
+
     if fmt:
         parts = []
         for f in fmt:
             parts.append("".join([str(random.randint(0,9)) for _ in range(f)]))
         number = "".join(parts)
-        
+
         display_parts = [dial_code]
         idx = 0
         for f in fmt:
@@ -304,7 +305,7 @@ def generate_number_for_country(country_tuple):
     else:
         number = "".join([str(random.randint(0,9)) for _ in range(digits_needed)])
         display = f"{dial_code} {number}"
-    
+
     full_phone = dial_code.replace("-", "").replace(" ", "") + number
     return full_phone, display
 
@@ -361,7 +362,7 @@ def extract_otp(text):
         r'(?:code|OTP|verification|password|login|pin|token|auth)[:\s]*(\d{4,8})',
         r'(\d{4,8})(?:\s*(?:is|\.|$))',
     ]
-    
+
     # 4-8 digit codes
     nums = re.findall(r'\b(\d{4,8})\b', text)
     if nums:
@@ -369,12 +370,12 @@ def extract_otp(text):
             # Likely OTP if standalone number
             pass
         return nums[0]
-    
+
     # Try more specific patterns
     for pat in patterns:
         m = re.search(pat, text, re.IGNORECASE)
         if m: return m.group(1) if m.lastindex else m.group(0)
-    
+
     return ""
 
 def check_service_registration(phone):
@@ -405,18 +406,18 @@ for c in COUNTRIES:
 def shelex_poll_numbers(app, loop):
     """Poll Shelex for OTPs on active numbers — runs in its own thread."""
     import asyncio as aio
-    
+
     aio.set_event_loop(loop)
-    
+
     print("[Shelex] Poller started (30s interval)")
-    
+
     async def poll_once():
         conn = sqlite3.connect(DB_FILE)
         c = conn.cursor()
         c.execute("SELECT id, phone_number, country FROM assigned_numbers WHERE status='active' ORDER BY RANDOM() LIMIT 5")
         numbers = c.fetchall()
         conn.close()
-        
+
         for num_id, phone, country in numbers:
             try:
                 # Try Shelex sources
@@ -431,20 +432,21 @@ def shelex_poll_numbers(app, loop):
                                 msg = text[:200]
                                 save_otp_message(num_id, phone, country, f"Shelex/{src['name']}", msg, otp, "Shelex", "shelex_free")
                                 print(f"[Shelex] OTP found: {phone} -> {otp}")
-                                
+
                                 # Send to Telegram user
                                 conn2 = sqlite3.connect(DB_FILE)
                                 c2 = conn2.cursor()
                                 c2.execute("SELECT user_id FROM assigned_numbers WHERE id=?", (num_id,))
                                 row = c2.fetchone()
                                 conn2.close()
-                                
+
                                 if row:
                                     try:
                                         async with app:
+                                            # FIXED: use country instead of undefined service_name
                                             await app.bot.send_message(
                                                 chat_id=row[0],
-                                                text=f"\U0001f310 **OTP Received!**\n\U0001f4de `{esc(phone)}`\n\U0001f3f7 {esc(service_name)}\n\U0001f511 `{esc(otp)}`",
+                                                text=f"\U0001f310 **OTP Received!**\n\U0001f4de `{esc(phone)}`\n\U0001f3f7 {esc(country)}\n\U0001f511 `{esc(otp)}`",
                                                 parse_mode="Markdown"
                                             )
                                     except:
@@ -453,7 +455,7 @@ def shelex_poll_numbers(app, loop):
                         pass
             except:
                 pass
-    
+
     async def poll_loop():
         while True:
             try:
@@ -461,7 +463,7 @@ def shelex_poll_numbers(app, loop):
             except Exception as e:
                 print(f"[Shelex] Error: {e}")
             await aio.sleep(30)
-    
+
     try:
         loop.run_until_complete(poll_loop())
     except Exception as e:
@@ -491,56 +493,53 @@ def twilio_webhook():
     body = data.get("Body", "")
     sender = data.get("From", "")
     to = data.get("To", "")
-    
+
     if not sender and request.is_json:
         data = request.get_json(silent=True) or {}
         body = data.get("Body", data.get("body", ""))
         sender = data.get("From", data.get("from", ""))
         to = data.get("To", data.get("to", ""))
-    
+
     if not sender:
         return jsonify({"error": "no sender"}), 400
-    
+
     # Clean phone number
     phone = sender.replace("+", "").replace(" ", "").replace("-", "")
-    
+
     otp = extract_otp(body)
     service = "Twilio"
-    
+
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    
+
     # Try to find a matching number
     c.execute("SELECT id, user_id, country FROM assigned_numbers WHERE REPLACE(REPLACE(phone_number,'+',''),' ','') LIKE ? AND status='active' LIMIT 1",
               (f"%{phone[-10:]}%",))
     row = c.fetchone()
-    
+
     if not row:
         # Assign to any user? No — just log it
         c.execute("SELECT id, user_id, country FROM assigned_numbers WHERE status='active' ORDER BY RANDOM() LIMIT 1")
         row = c.fetchone()
-    
+
     if row:
         num_id, user_id, country = row
         mid, total = save_otp_message(num_id, phone, country, sender, body, otp, service, "twilio")
-        
+
         if user_id and otp:
             try:
                 # Forward OTP to user via Telegram
                 text = f"\U0001f4e1 **Real OTP!**\n\U0001f4de `{esc(phone)}`\n\U0001f511 `{esc(otp)}`\n\U0001f4c5 {esc(service)}"
-                # We need the app instance — use bot directly
-                from telegram import Bot
                 bot = Bot(token=BOT_TOKEN)
-                # Send synchronously in thread
                 try:
                     asyncio.run(bot.send_message(chat_id=user_id, text=text, parse_mode="Markdown"))
                 except:
                     pass
             except:
                 pass
-    
+
     conn.close()
-    
+
     return jsonify({"status": "received", "otp": otp, "phone": phone})
 
 @flask_app.route("/incoming-sms", methods=["POST"])
@@ -610,9 +609,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     c.execute("INSERT OR IGNORE INTO users (user_id, username, first_name, joined_at) VALUES (?,?,?,?)",
               (user.id, esc(user.username or ""), esc(user.first_name or ""), datetime.now().isoformat()))
     conn.commit(); conn.close()
-    
+
     render_url = os.environ.get("RENDER_EXTERNAL_URL", "https://cyberx_otp.onrender.com")
-    
+
     msg = (
         "\[CYBERX Bot\]\n\n"
         "\[207 countries\] worldwide\n\n"
@@ -626,7 +625,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Webhook URL: {render_url}/twilio-sms\n"
         "For educational purposes only"
     )
-    
+
     await update.message.reply_text(msg, reply_markup=build_main_keyboard())
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -634,18 +633,18 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     data = query.data
     user_id = update.effective_user.id
-    
+
     if data == "main_menu":
         await safe_edit(query, "Main Menu", reply_markup=build_main_keyboard())
-    
+
     elif data == "get_number":
         keyboard, tp = get_country_keyboard(0)
         await safe_edit(query, f"Select Country ({len(COUNTRIES)} available) - Page 1 of {tp}", reply_markup=keyboard)
-    
+
     elif data.startswith("cntrypage_"):
         page = int(data.split("_")[1]); keyboard, tp = get_country_keyboard(page)
         await safe_edit(query, f"Select Country - Page {page+1} of {tp}", reply_markup=keyboard)
-    
+
     elif data.startswith("selcntry_"):
         idx = int(data.split("_")[1])
         if idx < len(COUNTRIES):
@@ -653,7 +652,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             phone, display = generate_number_for_country(COUNTRIES[idx])
             num_id = save_number_to_db(user_id, name, flag, dial_code, phone, display)
             save_otp_message(num_id, phone, name, "SYSTEM", "Number activated!", "", "SYSTEM", "system")
-            
+
             msg = (
                 f"Number Generated!\n\n"
                 f"{flag} {name}\n"
@@ -663,7 +662,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"Use {phone} on any service - OTPs in Inbox!"
             )
             await safe_edit(query, msg, reply_markup=build_number_detail_keyboard(num_id))
-    
+
     elif data == "my_numbers":
         nums = get_user_numbers(user_id)
         if not nums:
@@ -676,7 +675,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             keyboard.append([InlineKeyboardButton(f"{flag} {country}: {display} ({mc})", callback_data=f"view_number_{nid}")])
         keyboard.append([InlineKeyboardButton("Back to Menu", callback_data="main_menu")])
         await safe_edit(query, f"Your Numbers ({len(nums)} total)", reply_markup=InlineKeyboardMarkup(keyboard))
-    
+
     elif data.startswith("view_number_"):
         nid = int(data.split("_")[2])
         conn = sqlite3.connect(DB_FILE); c = conn.cursor()
@@ -685,7 +684,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not row: await safe_edit(query, "Not found", reply_markup=build_main_keyboard()); return
         country, flag, phone, display, created = row; mc = get_number_messages_count(nid)
         await safe_edit(query, f"{flag} {country}\nPhone: {phone}\n{display}\nMessages: {mc}", reply_markup=build_number_detail_keyboard(nid))
-    
+
     elif data.startswith("inbox_"):
         nid = int(data.split("_")[1])
         conn = sqlite3.connect(DB_FILE); c = conn.cursor()
@@ -695,13 +694,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         country, flag, phone, display = row
         msgs = get_number_messages(nid, 15)
         has_real = any(m[1]!="SYSTEM" for m in msgs) if msgs else False
-        
+
         if not has_real:
             conn.close()
             msg = f"Inbox - {flag} {country}\nPhone: {phone}\n\nNo OTPs yet\n\nUse {phone} on any service, request verification, then check back!"
             await safe_edit(query, msg, reply_markup=build_number_detail_keyboard(nid))
             return
-        
+
         text = f"Inbox - {flag} {country}\nPhone: {phone}\n" + "-"*20 + "\n"
         count = 0
         for m in msgs:
@@ -718,12 +717,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text += f"Showing {count} of {get_number_messages_count(nid)}"
         conn.close()
         await safe_edit(query, text, reply_markup=build_number_detail_keyboard(nid))
-    
+
     elif data.startswith("release_"):
         nid = int(data.split("_")[1])
         if release_number(nid, user_id): await safe_edit(query, "Released!", reply_markup=build_main_keyboard())
         else: await safe_edit(query, "Failed to release", reply_markup=build_main_keyboard())
-    
+
     elif data == "stats":
         conn = sqlite3.connect(DB_FILE); c = conn.cursor()
         c.execute("SELECT COUNT(*) FROM users"); users = c.fetchone()[0]
@@ -733,7 +732,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         c.execute("SELECT COUNT(*) FROM messages WHERE source='shelex_free'"); shelex = c.fetchone()[0]
         c.execute("SELECT COUNT(*) FROM messages WHERE source='twilio'"); twilio = c.fetchone()[0]
         conn.close()
-        
+
         msg = (
             f"Statistics\n"
             f"Users: {users}\n"
@@ -746,7 +745,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Webhook URL: https://cyber-x-otp.onrender.com/twilio-sms"
         )
         await safe_edit(query, msg, reply_markup=build_main_keyboard())
-    
+
     elif data == "how_otp":
         msg = (
             "How Real OTP Reception Works\n\n"
@@ -763,28 +762,28 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "For education only"
         )
         await safe_edit(query, msg, reply_markup=build_main_keyboard())
-    
+
     elif data == "noop": pass
 
 async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     user_id = update.effective_user.id
-    
+
     if text in ("/getnumber", "\U0001f4f1 Get Number"):
         keyboard, tp = get_country_keyboard(0)
         await update.message.reply_text(f"Select Country ({len(COUNTRIES)} countries)", reply_markup=keyboard)
         return
-    
+
     matching = [(i, c) for i, c in enumerate(COUNTRIES) if text.lower() in c[0].lower()]
     if not matching: matching = [(i, c) for i, c in enumerate(COUNTRIES) if text in c[2]]
-    
+
     if matching:
         if len(matching) == 1:
             idx, cd = matching[0]; name, flag, dial, fmt = cd
             phone, display = generate_number_for_country(cd)
             num_id = save_number_to_db(user_id, name, flag, dial, phone, display)
             save_otp_message(num_id, phone, name, "SYSTEM", "Activated!", "", "SYSTEM", "system")
-            
+
             await update.message.reply_text(
                 f"{flag} {name}\nPhone: {phone}\n{display}",
                 reply_markup=build_number_detail_keyboard(num_id))
@@ -822,57 +821,57 @@ def main():
     print(f"  {len(COUNTRIES)} countries  Port 10000  4min health ping")
     print("  https://cyberx_otp.onrender.com")
     print("="*55)
-    
+
     init_db()
-    
+
     if not BOT_TOKEN:
         print("\n[!] ERROR: BOT_TOKEN environment variable is missing!")
         sys.exit(1)
-    
+
     render_url = os.environ.get("RENDER_EXTERNAL_URL", "https://cyberx_otp.onrender.com")
     if render_url:
         print(f"[OK] Render URL: {render_url}")
     else:
         print("[!] No RENDER_EXTERNAL_URL set")
-    
+
     # Start Flask (for webhook + health)
     flask_thread = threading.Thread(target=start_flask, daemon=True)
     flask_thread.start()
     print("[OK] Flask running on port 10000")
-    
+
     # Start health ping (every 4 minutes)
     ping_thread = threading.Thread(target=health_ping, daemon=True)
     ping_thread.start()
     print("[OK] Health ping every 4 minutes")
-    
+
     print("STEP 1")
-    
+
     # Build Telegram app inside a temporary event loop (Python 3.14 compat)
     async def _build_app():
         return Application.builder().token(BOT_TOKEN).build()
-    
+
     app = asyncio.run(_build_app())
-    
+
     print("STEP 2")
-    
+
     # Add handlers
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
-    
+
     # Start Shelex polling in its own thread + event loop
     shelex_loop = asyncio.new_event_loop()
     asyncio.set_event_loop(shelex_loop)
     shelex_thread = threading.Thread(target=shelex_poll_numbers, args=(app, shelex_loop), daemon=True)
     shelex_thread.start()
-    
+
     print("STEP 3")
     print(f"[OK] Bot running! {len(COUNTRIES)} countries.")
     print(f"[OK] Twilio webhook: {render_url}/twilio-sms")
     print(f"[OK] Health: {render_url}/health")
     print("STEP 4")
-    
+
     # run_polling() is synchronous - manages own event loop internally
     try:
         app.run_polling(allowed_updates=Update.ALL_TYPES)
@@ -880,7 +879,7 @@ def main():
         print("\n[!] Shutting down...")
     except Exception as e:
         print(f"\n[!] Error: {e}")
-    
+
     print("STEP 5")
 
 if __name__ == "__main__":
