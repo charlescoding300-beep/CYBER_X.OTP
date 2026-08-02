@@ -26,7 +26,7 @@ from telegram.ext import Application, CommandHandler, CallbackQueryHandler, Mess
 # 🔧 ONLY TWO THINGS TO EDIT
 # ================================================================
 
-BOT_TOKEN = "YOUR_BOT_TOKEN"          # From @BotFather
+BOT_TOKEN = "8532550542:AAF35U8_cq_1rHYCYpyZWzUnDyO2_F26plY"          # From @BotFather
 ADMIN_ID = 8580418434                   # Your Telegram ID
 
 # ================================================================
