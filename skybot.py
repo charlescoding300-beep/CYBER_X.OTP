@@ -4,11 +4,12 @@
 ║                                                                  ║
 ║  🔒 OTP LOCK: 10 fallback numbers → first OTP wins → auto-push  ║
 ║  200+ COUNTRIES │ PORT 10000 │ HEALTH PING 4 MIN                ║
-║  URL: https://cyberx_otp.onrender.com                           ║
+║  URL: https://cyber-x-otp.onrender.com                          ║
 ╚══════════════════════════════════════════════════════════════════╝
 """
 
 import sys
+import asyncio
 import sqlite3
 import random
 import re
@@ -26,7 +27,7 @@ from telegram.ext import Application, CommandHandler, CallbackQueryHandler, Mess
 # 🔧 ONLY TWO THINGS TO EDIT
 # ================================================================
 
-BOT_TOKEN = "8532550542:AAF35U8_cq_1rHYCYpyZWzUnDyO2_F26plY"          # From @BotFather
+BOT_TOKEN = "YOUR_BOT_TOKEN"          # From @BotFather
 ADMIN_ID = 8580418434                   # Your Telegram ID
 
 # ================================================================
@@ -615,7 +616,7 @@ async def lock_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ================================================================
 
 flask_app = Flask(__name__)
-RENDER_URL = os.environ.get("RENDER_EXTERNAL_URL", "https://cyberx_otp.onrender.com")
+RENDER_URL = os.environ.get("RENDER_EXTERNAL_URL", "https://cyber-x-otp.onrender.com")
 
 @flask_app.route('/twilio-sms', methods=['POST'])
 def twilio_webhook():
@@ -691,7 +692,7 @@ def health_ping():
             if row: url = row[0]
             conn.close()
         except: pass
-        if not url: url = "https://cyberx_otp.onrender.com"
+        if not url: url = "https://cyber-x-otp.onrender.com"
         try:
             resp = requests.get(f"{url.rstrip('/')}/health", timeout=30)
             print(f"[HEALTH] ✅ {url}/health → {resp.status_code} | {datetime.now().strftime('%H:%M:%S')}")
@@ -709,17 +710,17 @@ def get_country_keyboard(page=0, search=None):
         matching = [(i, c) for i, c in enumerate(COUNTRIES) if search.lower() in c[0].lower()]
         if not matching: matching = [(i, c) for i, c in enumerate(COUNTRIES) if search in c[2]]
     else: matching = list(enumerate(COUNTRIES))
-    total_pages = max(1, (len(matching)+COUNTER_PER_PAGE-1)//COUNTER_PER_PAGE) if False else max(1, (len(matching)+COUNTRY_PER_PAGE-1)//COUNTRY_PER_PAGE)
-    page = max(0, min(page, total_pages-1))
-    start = page*COUNTRY_PER_PAGE; end = min(start+COUNTRY_PER_PAGE, len(matching))
+    total_pages = max(1, (len(matching) + COUNTRY_PER_PAGE - 1) // COUNTRY_PER_PAGE)
+    page = max(0, min(page, total_pages - 1))
+    start = page * COUNTRY_PER_PAGE; end = min(start + COUNTRY_PER_PAGE, len(matching))
     for i in range(start, end, 2):
         row = [InlineKeyboardButton(f"{matching[i][1][1]} {matching[i][1][0]}", callback_data=f"selcntry_{matching[i][0]}")]
-        if i+1 < end: row.append(InlineKeyboardButton(f"{matching[i+1][1][1]} {matching[i+1][1][0]}", callback_data=f"selcntry_{matching[i+1][0]}"))
+        if i + 1 < end: row.append(InlineKeyboardButton(f"{matching[i+1][1][1]} {matching[i+1][1][0]}", callback_data=f"selcntry_{matching[i+1][0]}"))
         keyboard.append(row)
     nav_row = []
     if page > 0: nav_row.append(InlineKeyboardButton("◀️ Prev", callback_data=f"cntrypage_{page-1}"))
     nav_row.append(InlineKeyboardButton(f"📄 {page+1}/{total_pages}", callback_data="noop"))
-    if page < total_pages-1: nav_row.append(InlineKeyboardButton("Next ▶️", callback_data=f"cntrypage_{page+1}"))
+    if page < total_pages - 1: nav_row.append(InlineKeyboardButton("Next ▶️", callback_data=f"cntrypage_{page+1}"))
     keyboard.append(nav_row)
     keyboard.append([InlineKeyboardButton("🔙 Back to Menu", callback_data="main_menu")])
     return InlineKeyboardMarkup(keyboard), total_pages
@@ -1046,6 +1047,13 @@ def main():
         print("\n[!] ERROR: Set your BOT_TOKEN in skybot.py!")
         sys.exit(1)
 
+    # ⚡ Python 3.14-safe event loop (Render uses Python 3.14)
+    try:
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
     # Start Flask (webhook + health) on PORT 10000
     flask_thread = threading.Thread(target=start_flask, daemon=True)
     flask_thread.start()
@@ -1071,7 +1079,6 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
 
     # Shelex polling
-    loop = asyncio.get_event_loop()
     shelex_thread = threading.Thread(target=shelex_poll_numbers, args=(app, loop), daemon=True)
     shelex_thread.start()
     print("[✓] Shelex polling every 30s")
