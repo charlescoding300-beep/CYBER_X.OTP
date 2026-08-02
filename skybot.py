@@ -5,6 +5,7 @@
 ║  🔒 OTP LOCK: 10 fallback numbers → first OTP wins → auto-push  ║
 ║  200+ COUNTRIES │ PORT 10000 │ HEALTH PING 4 MIN                ║
 ║  URL: https://cyber-x-otp.onrender.com                          ║
+║  ✅ FIX: US numbers now +1 + 10 digits (NANP valid)             ║
 ╚══════════════════════════════════════════════════════════════════╝
 """
 
@@ -27,16 +28,18 @@ from telegram.ext import Application, CommandHandler, CallbackQueryHandler, Mess
 # 🔧 ONLY TWO THINGS TO EDIT
 # ================================================================
 
-BOT_TOKEN = "8532550542:AAF35U8_cq_1rHYCYpyZWzUnDyO2_F26plY"          # From @BotFather
+BOT_TOKEN = "YOUR_BOT_TOKEN"          # From @BotFather
 ADMIN_ID = 8580418434                   # Your Telegram ID
 
 # ================================================================
 # 🌍 200+ COUNTRIES — EVERY COUNTRY IN THE WORLD
 # ================================================================
+# Tuple = (name, flag, dial_code, (cc, area, sub, TOTAL_DIGITS))
+# TOTAL_DIGITS = full international length INCLUDING country code
 
 COUNTRIES = [
     # 🌍 AFRICA (54)
-    ("Algeria", "🇩🇿", "+213", (2, 3, 6, 11)), ("Angola", "🇦🇴", "+244", (3, 3, 6, 12)),
+    ("Algeria", "🇩🇿", "+213", (3, 3, 6, 12)), ("Angola", "🇦🇴", "+244", (3, 3, 6, 12)),
     ("Benin", "🇧🇯", "+229", (3, 3, 6, 12)), ("Botswana", "🇧🇼", "+267", (3, 3, 6, 12)),
     ("Burkina Faso", "🇧🇫", "+226", (3, 3, 6, 12)), ("Burundi", "🇧🇮", "+257", (3, 3, 6, 12)),
     ("Cabo Verde", "🇨🇻", "+238", (3, 3, 6, 12)), ("Cameroon", "🇨🇲", "+237", (3, 3, 6, 12)),
@@ -54,7 +57,7 @@ COUNTRIES = [
     ("Mali", "🇲🇱", "+223", (3, 3, 6, 12)), ("Mauritania", "🇲🇷", "+222", (3, 3, 6, 12)),
     ("Mauritius", "🇲🇺", "+230", (3, 3, 6, 12)), ("Morocco", "🇲🇦", "+212", (3, 3, 6, 12)),
     ("Mozambique", "🇲🇿", "+258", (3, 3, 6, 12)), ("Namibia", "🇳🇦", "+264", (3, 3, 6, 12)),
-    ("Niger", "🇳🇪", "+227", (3, 3, 6, 12)), ("Nigeria", "🇳🇬", "+234", (3, 3, 6, 12)),
+    ("Niger", "🇳🇪", "+227", (3, 3, 6, 12)), ("Nigeria", "🇳🇬", "+234", (3, 3, 7, 13)),
     ("Rwanda", "🇷🇼", "+250", (3, 3, 6, 12)), ("São Tomé", "🇸🇹", "+239", (3, 3, 6, 12)),
     ("Senegal", "🇸🇳", "+221", (3, 3, 6, 12)), ("Seychelles", "🇸🇨", "+248", (3, 3, 6, 12)),
     ("Sierra Leone", "🇸🇱", "+232", (3, 3, 6, 12)), ("Somalia", "🇸🇴", "+252", (3, 3, 6, 12)),
@@ -66,19 +69,19 @@ COUNTRIES = [
     ("Zanzibar", "🇹🇿", "+255", (3, 3, 6, 12)),
 
     # 🌍 NORTH AMERICA (26)
-    ("Antigua", "🇦🇬", "+1-268", (4, 3, 6, 13)), ("Bahamas", "🇧🇸", "+1-242", (4, 3, 6, 13)),
-    ("Barbados", "🇧🇧", "+1-246", (4, 3, 6, 13)), ("Belize", "🇧🇿", "+501", (3, 3, 6, 12)),
-    ("Bermuda", "🇧🇲", "+1-441", (4, 3, 6, 13)), ("Canada", "🇨🇦", "+1", (1, 3, 7, 11)),
+    ("Antigua", "🇦🇬", "+1-268", (4, 3, 4, 11)), ("Bahamas", "🇧🇸", "+1-242", (4, 3, 4, 11)),
+    ("Barbados", "🇧🇧", "+1-246", (4, 3, 4, 11)), ("Belize", "🇧🇿", "+501", (3, 3, 6, 12)),
+    ("Bermuda", "🇧🇲", "+1-441", (4, 3, 4, 11)), ("Canada", "🇨🇦", "+1", (1, 3, 7, 11)),
     ("Costa Rica", "🇨🇷", "+506", (3, 3, 6, 12)), ("Cuba", "🇨🇺", "+53", (2, 3, 6, 11)),
-    ("Dominica", "🇩🇲", "+1-767", (4, 3, 6, 13)), ("Dominican Rep.", "🇩🇴", "+1-809", (4, 3, 6, 13)),
-    ("El Salvador", "🇸🇻", "+503", (3, 3, 6, 12)), ("Grenada", "🇬🇩", "+1-473", (4, 3, 6, 13)),
+    ("Dominica", "🇩🇲", "+1-767", (4, 3, 4, 11)), ("Dominican Rep.", "🇩🇴", "+1-809", (4, 3, 4, 11)),
+    ("El Salvador", "🇸🇻", "+503", (3, 3, 6, 12)), ("Grenada", "🇬🇩", "+1-473", (4, 3, 4, 11)),
     ("Guatemala", "🇬🇹", "+502", (3, 3, 6, 12)), ("Haiti", "🇭🇹", "+509", (3, 3, 6, 12)),
-    ("Honduras", "🇭🇳", "+504", (3, 3, 6, 12)), ("Jamaica", "🇯🇲", "+1-876", (4, 3, 6, 13)),
+    ("Honduras", "🇭🇳", "+504", (3, 3, 6, 12)), ("Jamaica", "🇯🇲", "+1-876", (4, 3, 4, 11)),
     ("Mexico", "🇲🇽", "+52", (2, 3, 7, 12)), ("Nicaragua", "🇳🇮", "+505", (3, 3, 6, 12)),
-    ("Panama", "🇵🇦", "+507", (3, 3, 6, 12)), ("Puerto Rico", "🇵🇷", "+1-787", (4, 3, 6, 13)),
-    ("St. Kitts", "🇰🇳", "+1-869", (4, 3, 6, 13)), ("St. Lucia", "🇱🇨", "+1-758", (4, 3, 6, 13)),
-    ("St. Vincent", "🇻🇨", "+1-784", (4, 3, 6, 13)), ("Trinidad", "🇹🇹", "+1-868", (4, 3, 6, 13)),
-    ("Turks & Caicos", "🇹🇨", "+1-649", (4, 3, 6, 13)), ("United States", "🇺🇸", "+1", (1, 3, 7, 11)),
+    ("Panama", "🇵🇦", "+507", (3, 3, 6, 12)), ("Puerto Rico", "🇵🇷", "+1-787", (4, 3, 4, 11)),
+    ("St. Kitts", "🇰🇳", "+1-869", (4, 3, 4, 11)), ("St. Lucia", "🇱🇨", "+1-758", (4, 3, 4, 11)),
+    ("St. Vincent", "🇻🇨", "+1-784", (4, 3, 4, 11)), ("Trinidad", "🇹🇹", "+1-868", (4, 3, 4, 11)),
+    ("Turks & Caicos", "🇹🇨", "+1-649", (4, 3, 4, 11)), ("United States", "🇺🇸", "+1", (1, 3, 7, 11)),
 
     # 🌍 SOUTH AMERICA (12)
     ("Argentina", "🇦🇷", "+54", (2, 3, 7, 12)), ("Bolivia", "🇧🇴", "+591", (3, 3, 6, 12)),
@@ -142,7 +145,7 @@ COUNTRIES = [
     ("Vatican City", "🇻🇦", "+379", (3, 3, 6, 12)),
 
     # 🌍 OCEANIA (14)
-    ("Australia", "🇦🇺", "+61", (2, 3, 7, 12)), ("Fiji", "🇫🇯", "+679", (3, 3, 6, 12)),
+    ("Australia", "🇦🇺", "+61", (2, 3, 6, 11)), ("Fiji", "🇫🇯", "+679", (3, 3, 6, 12)),
     ("Kiribati", "🇰🇮", "+686", (3, 3, 6, 12)), ("Marshall Is.", "🇲🇭", "+692", (3, 3, 6, 12)),
     ("Micronesia", "🇫🇲", "+691", (3, 3, 6, 12)), ("Nauru", "🇳🇷", "+674", (3, 3, 6, 12)),
     ("New Zealand", "🇳🇿", "+64", (2, 3, 7, 12)), ("Palau", "🇵🇼", "+680", (3, 3, 6, 12)),
@@ -151,8 +154,8 @@ COUNTRIES = [
     ("Tuvalu", "🇹🇻", "+688", (3, 3, 6, 12)), ("Vanuatu", "🇻🇺", "+678", (3, 3, 6, 12)),
 
     # 🌍 MICRO / SPECIAL
-    ("Hawaii", "🌺", "+1-808", (4, 3, 6, 13)), ("Guam", "🇬🇺", "+1-671", (4, 3, 6, 13)),
-    ("American Samoa", "🇦🇸", "+1-684", (4, 3, 6, 13)), ("Northern Mariana", "🇲🇵", "+1-670", (4, 3, 6, 13)),
+    ("Hawaii", "🌺", "+1-808", (4, 3, 4, 11)), ("Guam", "🇬🇺", "+1-671", (4, 3, 4, 11)),
+    ("American Samoa", "🇦🇸", "+1-684", (4, 3, 4, 11)), ("Northern Mariana", "🇲🇵", "+1-670", (4, 3, 4, 11)),
 ]
 
 COUNTRIES.sort(key=lambda x: x[0])
@@ -167,7 +170,6 @@ LOCK_POOL_SIZE = 10           # numbers fired at once
 LOCK_POLL_SECONDS = 22        # seconds between check rounds
 LOCK_TIMEOUT_MINUTES = 4      # give up & offer swap after this
 
-# Countries with Shelex coverage (real network numbers → better OTP odds)
 LOCK_COUNTRIES = ["United States", "United Kingdom", "India", "Canada",
                   "Australia", "Germany", "France", "Brazil", "Mexico",
                   "Indonesia", "Philippines", "Vietnam", "Thailand",
@@ -236,7 +238,6 @@ def init_db():
         started_at TEXT,
         ended_at TEXT
     )''')
-    # upgrade old databases missing the new columns
     for col in ["locked", "locked_at", "lock_session_id"]:
         try: c.execute(f"ALTER TABLE assigned_numbers ADD COLUMN {col} TEXT")
         except: pass
@@ -244,7 +245,7 @@ def init_db():
     conn.close()
 
 # ================================================================
-# 📱 NUMBER GENERATOR (NANP-valid for US/Canada)
+# 📱 NUMBER GENERATOR — CORRECT LENGTH FOR EVERY COUNTRY
 # ================================================================
 
 def rand_digit(low=0, high=9):
@@ -252,16 +253,16 @@ def rand_digit(low=0, high=9):
 
 def generate_number_for_country(country_data):
     name, flag, dial_code, fmt = country_data
-    cc_digits, ac_digits, sub_digits, total_len = fmt
+    _, ac_digits, _, total_len = fmt            # total_len = full intl length incl. country code
     clean_dial = dial_code.replace("+", "").replace("-", "")
 
     phone = clean_dial
-    for _ in range(cc_digits):
-        phone += rand_digit(0, 9)
+    # ✅ FIX: generate exactly (total_len - len(country code)) digits
+    remaining_total = total_len - len(clean_dial)
 
-    remaining_total = ac_digits + sub_digits
     for i in range(remaining_total):
         if name in ["United States", "Canada"]:
+            # NANP: area code 1st digit 2-9, exchange 1st digit 2-9
             phone += rand_digit(2, 9) if (i == 0 or i == ac_digits) else rand_digit(0, 9)
         elif name == "United Kingdom":
             phone += '7' if i == 0 else rand_digit(0, 9)
@@ -300,6 +301,7 @@ def generate_number_for_country(country_data):
     elif name in ["Uganda", "Kenya", "Tanzania"]: r = remaining; formatted = f"{dial_code} {r[:3]} {r[3:6]} {r[6:]}"
     elif name == "South Africa": r = remaining; formatted = f"+27 {r[:2]} {r[2:5]} {r[5:]}"
     elif clean_dial == "1": formatted = f"+1 ({remaining[:3]}) {remaining[3:6]}-{remaining[6:10]}"
+    elif "-" in dial_code: formatted = f"{dial_code} {remaining[:3]}-{remaining[3:]}"
     else:
         chunks = []; r = remaining
         while len(r) > 4: chunks.append(r[:3]); r = r[3:]
@@ -386,10 +388,6 @@ def fetch_shelex_otp(country_code, phone_number):
     return []
 
 def check_service_registration(phone_number, shelex_code=None):
-    """
-    Ask Shelex if this number already has app messages (WhatsApp, etc.).
-    If yes → the number was already registered/used by another user.
-    """
     registered = []
     codes = [shelex_code] if shelex_code else ["us"]
     clean = phone_number.replace("+", "").replace("-", "").replace(" ", "")
@@ -410,7 +408,6 @@ def check_service_registration(phone_number, shelex_code=None):
     return registered
 
 def shelex_poll_numbers(bot_app, loop):
-    """Watch every active number. New OTP → save + push to owner instantly."""
     while True:
         try:
             time.sleep(30)
@@ -449,7 +446,7 @@ def shelex_poll_numbers(bot_app, loop):
                                         owner = user_row[0]
                                         async def notify():
                                             try:
-                                                await bot_app.bot.send_message(chat_id=owner, text=f"📥 **New OTP!**\n\n📞 `{phone}`\n🏷️ {service}\n🔑 `{otp_code}`\n\nCheck Inbox!", parse_mode="Markdown")
+                                                await bot_app.bot.send_message(chat_id=owner, text=f"📥 **New OTP!**\n\n📞 `+{phone}`\n🏷️ {service}\n🔑 `{otp_code}`\n\nCheck Inbox!", parse_mode="Markdown")
                                             except: pass
                                         asyncio.run_coroutine_threadsafe(notify(), loop)
                                     print(f"[SHELEX] ✅ OTP: [{service}] {otp_code} for {phone}")
@@ -464,7 +461,6 @@ def shelex_poll_numbers(bot_app, loop):
 # ================================================================
 
 def lock_start_session(user_id):
-    """Kill old session, fire 10 numbers at once, lock them to this user."""
     conn = sqlite3.connect(DB_FILE); c = conn.cursor()
     c.execute("UPDATE lock_sessions SET status='stopped', ended_at=? WHERE user_id=? AND status='running'",
               (datetime.now().isoformat(), user_id))
@@ -506,10 +502,9 @@ def _lock_send(app, loop, user_id, text):
     except: pass
 
 def lock_poll_thread(app, loop):
-    """Background watcher: 10 numbers checked every ~22s. First OTP → instant push."""
     while True:
         try:
-            time.sleep(LOCK_POLL_SECONDS + random.uniform(0, 5))  # jitter avoids rate-limit
+            time.sleep(LOCK_POLL_SECONDS + random.uniform(0, 5))
             conn = sqlite3.connect(DB_FILE); c = conn.cursor()
             c.execute("SELECT id, user_id, started_at FROM lock_sessions WHERE status='running'")
             sessions = c.fetchall(); conn.close()
@@ -554,7 +549,7 @@ def lock_poll_thread(app, loop):
                             lock_end_session(sid, 'won', phone, svc, otp)
                             _lock_send(app, loop, user_id,
                                 f"🎯 **OTP CAPTURED!**\n\n"
-                                f"📞 `{phone}` ({country})\n"
+                                f"📞 `+{phone}` ({country})\n"
                                 f"🏷️ {svc}\n"
                                 f"🔑 **CODE: `{otp}`**\n\n"
                                 f"⚡ Enter it in WhatsApp NOW — fast, before it expires!\n"
@@ -569,7 +564,7 @@ def lock_poll_thread(app, loop):
 async def lock_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     sid, nums = lock_start_session(user_id)
-    lines = "\n".join(f"   • `{p}` ({c})" for _, p, d, c in nums[:5])
+    lines = "\n".join(f"   • `+{p}` ({c})" for _, p, d, c in nums[:5])
     extra = f"   • ...and {len(nums)-5} more" if len(nums) > 5 else ""
     await update.message.reply_text(
         f"🔒 **OTP LOCK ARMED — {len(nums)} numbers fired!**\n"
@@ -588,7 +583,7 @@ async def lock_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if q.data == "lock_arm":
         sid, nums = lock_start_session(user_id)
-        lines = "\n".join(f"   • `{p}` ({c})" for _, p, d, c in nums[:5])
+        lines = "\n".join(f"   • `+{p}` ({c})" for _, p, d, c in nums[:5])
         extra = f"   • ...and {len(nums)-5} more" if len(nums) > 5 else ""
         await q.edit_message_text(
             f"🔒 **OTP LOCK ARMED — {len(nums)} numbers fired!**\n"
@@ -625,6 +620,9 @@ def twilio_webhook():
     body = request.form.get('Body', '').strip()
     if not from_number or not body: return "OK", 200
     if ':' in from_number: from_number = from_number.split(':')[-1]
+    # ✅ FIX: Twilio sends "+1252..." — strip the + so it matches our stored numbers
+    to_number = to_number.lstrip('+')
+    from_number = from_number.lstrip('+')
 
     conn = sqlite3.connect(DB_FILE); c = conn.cursor()
     c.execute("SELECT id, user_id, country, phone_number FROM assigned_numbers WHERE phone_number=? AND status='active'", (to_number,))
@@ -678,11 +676,10 @@ def get_message_count():
     except: return 0
 
 def start_flask():
-    port = int(os.environ.get("PORT", 10000))   # Render injects PORT (default 10000)
+    port = int(os.environ.get("PORT", 10000))
     flask_app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
 
 def health_ping():
-    """Ping own /health every 4 minutes so Render never sleeps."""
     while True:
         url = os.environ.get("RENDER_EXTERNAL_URL") or RENDER_URL
         try:
@@ -801,7 +798,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             save_otp_message(num_id, phone, name, "SYSTEM", f"✅ Number activated!", "", "SYSTEM", "system")
             shelex = "✅" if COUNTRY_TO_SHELEX.get(name) else "❌"
 
-            # 👥 "Registered by another user" indicator
             services = check_service_registration(phone, COUNTRY_TO_SHELEX.get(name))
             service_info = ""
             if services:
@@ -813,7 +809,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 service_info = "\n\n✅ _Number is fresh — no previous app registration found_"
 
             await safe_edit(query,
-                f"✅ **Number Generated!**\n\n🌍 {flag} **{name}**\n📞 `{phone}`\n📋 {display}\n🆔 ID: `{num_id}`\n\n📶 Shelex: {shelex}\n{service_info}\n\nUse `{phone}` on any service → OTPs in Inbox!",
+                f"✅ **Number Generated!**\n\n🌍 {flag} **{name}**\n📞 `+{phone}`\n📋 {display}\n🆔 ID: `{num_id}`\n\n📶 Shelex: {shelex}\n{service_info}\n\n⚠️ Type the number **with the + sign** in WhatsApp!\n\nUse it on any service → OTPs in Inbox!",
                 parse_mode="Markdown", reply_markup=build_number_detail_keyboard(num_id))
 
     elif data == "my_numbers":
@@ -840,7 +836,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         country, flag, phone, display, created, locked = row
         badge = "🔒 " if locked else ""
         mc = get_number_messages_count(nid)
-        await safe_edit(query, f"📱 {flag} **{badge}{country}**\n📞 `{phone}`\n📋 {display}\n📩 {mc} messages", parse_mode="Markdown", reply_markup=build_number_detail_keyboard(nid))
+        await safe_edit(query, f"📱 {flag} **{badge}{country}**\n📞 `+{phone}`\n📋 {display}\n📩 {mc} messages", parse_mode="Markdown", reply_markup=build_number_detail_keyboard(nid))
 
     elif data.startswith("inbox_"):
         nid = int(data.split("_")[1])
@@ -852,9 +848,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msgs = get_number_messages(nid, 15); has_real = any(m[1]!="SYSTEM" for m in msgs) if msgs else False
         if not has_real:
             conn.close()
-            await safe_edit(query, f"📥 **Inbox — {flag} {country}**\n📞 `{phone}`\n\n📭 No OTPs yet\n\n1️⃣ Use `{phone}` on any service\n2️⃣ Request verification\n3️⃣ Check back in ~30s!", parse_mode="Markdown", reply_markup=build_number_detail_keyboard(nid))
+            await safe_edit(query, f"📥 **Inbox — {flag} {country}**\n📞 `+{phone}`\n\n📭 No OTPs yet\n\n1️⃣ Use `+{phone}` on any service\n2️⃣ Request verification\n3️⃣ Check back in ~30s!", parse_mode="Markdown", reply_markup=build_number_detail_keyboard(nid))
             return
-        text = f"📥 **Inbox — {flag} {country}**\n📞 `{phone}`\n\n"; count = 0
+        text = f"📥 **Inbox — {flag} {country}**\n📞 `+{phone}`\n\n"; count = 0
         for m in msgs:
             if m[1]=="SYSTEM": continue
             if count>=10: break
@@ -956,7 +952,7 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             elif COUNTRY_TO_SHELEX.get(name):
                 svc_info = "\n\n✅ _Fresh number — no previous registration found_"
 
-            await update.message.reply_text(f"✅ **{flag} {name}**\n📞 `{phone}`\n📋 {display}{svc_info}", parse_mode="Markdown", reply_markup=build_number_detail_keyboard(num_id))
+            await update.message.reply_text(f"✅ **{flag} {name}**\n📞 `+{phone}`\n📋 {display}{svc_info}\n\n⚠️ Use the number **with the + sign** in WhatsApp!", parse_mode="Markdown", reply_markup=build_number_detail_keyboard(num_id))
             return
         elif len(matching) <= 12:
             kb = []
@@ -967,7 +963,6 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Type a country name, press buttons, or use /lock for OTP Lock!", reply_markup=build_main_keyboard())
 
 async def seturl_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Admin: /seturl https://yourapp.onrender.com"""
     if update.effective_user.id != ADMIN_ID: return
     if not context.args:
         await update.message.reply_text(f"Usage: `/seturl {RENDER_URL}`", parse_mode="Markdown")
@@ -990,7 +985,7 @@ async def inject_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not row: return
         num_id, owner_id, phone, country = row
         save_otp_message(num_id, phone, country, service, f"Your {service} code: {code}", code, service, "manual_inject")
-        await update.message.reply_text(f"✅ **Injected!**\n📞 `{phone}`\n🏷️ {service}\n🔑 `{code}`", parse_mode="Markdown")
+        await update.message.reply_text(f"✅ **Injected!**\n📞 `+{phone}`\n🏷️ {service}\n🔑 `{code}`", parse_mode="Markdown")
     except: pass
 
 async def mynumbers_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1047,24 +1042,20 @@ def main():
         print("\n[!] ERROR: Set your BOT_TOKEN in skybot.py!")
         sys.exit(1)
 
-    # ⚡ Python 3.14-safe event loop (Render uses Python 3.14)
     try:
         loop = asyncio.get_event_loop()
     except RuntimeError:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
 
-    # Start Flask (webhook + health) on PORT 10000
     flask_thread = threading.Thread(target=start_flask, daemon=True)
     flask_thread.start()
     print("[✓] Flask running on port 10000")
 
-    # Health ping every 4 minutes — keeps Render awake
     ping_thread = threading.Thread(target=health_ping, daemon=True)
     ping_thread.start()
     print("[✓] Health ping every 4 minutes")
 
-    # Telegram bot
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("lock", lock_command))
@@ -1073,17 +1064,14 @@ def main():
     app.add_handler(CommandHandler("inject", inject_command))
     app.add_handler(CommandHandler("seturl", seturl_command))
     app.add_handler(CommandHandler("help", help_command))
-    # ⚠️ lock_callback MUST be registered BEFORE button_handler
     app.add_handler(CallbackQueryHandler(lock_callback, pattern="^lock_"))
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
 
-    # Shelex polling
     shelex_thread = threading.Thread(target=shelex_poll_numbers, args=(app, loop), daemon=True)
     shelex_thread.start()
     print("[✓] Shelex polling every 30s")
 
-    # OTP Lock watcher — 10 numbers, first OTP wins
     lock_thread = threading.Thread(target=lock_poll_thread, args=(app, loop), daemon=True)
     lock_thread.start()
     print(f"[✓] OTP Lock pool: {LOCK_POOL_SIZE} numbers, {LOCK_POLL_SECONDS}s cycle")
