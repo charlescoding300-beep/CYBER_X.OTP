@@ -1,1241 +1,1030 @@
 """
 ╔══════════════════════════════════════════════════════════════════╗
-║        📱 CYBERX VIRTUAL NUMBER BOT — RENDER DEPLOY v3.0        ║
+║        📱 CYBERX VIRTUAL NUMBER BOT — RENDER DEPLOY             ║
 ║                                                                  ║
+║  🔒 OTP LOCK: 10 fallback numbers → first OTP wins → auto-push  ║
 ║  200+ COUNTRIES │ PORT 10000 │ HEALTH PING 4 MIN                ║
-║  https://cyberx_otp.onrender.com                                ║
-║                                                                  ║
-║  REAL NUMBERS SCRAPED LIVE FROM FREE SMS SITES                  ║
-║  CHECK MESSAGES → LIVE SCRAPE → REAL OTPS IN SECONDS            ║
-║                                                                  ║
-║  FOR EDUCATIONAL USE ONLY                                        ║
+║  URL: https://cyberx_otp.onrender.com                           ║
 ╚══════════════════════════════════════════════════════════════════╝
 """
 
+import sys
 import sqlite3
 import random
 import re
 import time
-import json
 import threading
-import asyncio
 import requests
 import os
-import sys
-import traceback
-import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from flask import Flask, request, jsonify
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Bot
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.error import BadRequest
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 
 # ================================================================
-# 🔧 ENVIRONMENT VARIABLES
+# 🔧 ONLY TWO THINGS TO EDIT
 # ================================================================
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_ID = int(os.getenv("ADMIN_ID", "8580418434"))
+BOT_TOKEN = "YOUR_BOT_TOKEN"          # From @BotFather
+ADMIN_ID = 8580418434                   # Your Telegram ID
 
 # ================================================================
-# 📝 Logging
-# ================================================================
-
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO,
-)
-logging.getLogger("httpx").setLevel(logging.WARNING)
-
-# ================================================================
-# ✨ Markdown Escaping Helper
-# ================================================================
-
-def esc(t):
-    if t is None:
-        return ""
-    return str(t).replace('_', '\\_').replace('*', '\\*').replace('`', '\\`').replace('[', '\\[')
-
-# ================================================================
-# ⏰ TIME HELPERS
-# ================================================================
-
-def now_utc():
-    return datetime.now(timezone.utc)
-
-def format_time_12hr(iso_str, tz_offset=0):
-    """Convert ISO time string to 12-hour AM/PM format with timezone."""
-    try:
-        dt = datetime.fromisoformat(iso_str.replace('Z', '+00:00'))
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        # Apply user's timezone offset (in hours)
-        offset = timedelta(hours=tz_offset)
-        local_dt = dt + offset
-        # Format as 12-hour
-        tz_sign = '+' if tz_offset >= 0 else ''
-        tz_name = f"UTC{tz_sign}{tz_offset}" if tz_offset != 0 else "UTC"
-        return local_dt.strftime(f"%I:%M:%S %p - %b %d, %Y ({tz_name})")
-    except:
-        return iso_str
-
-def get_relative_time(ago_text):
-    """Convert 'X seconds ago' or 'X minutes ago' to an ISO time."""
-    now = datetime.now(timezone.utc)
-    ago_text = ago_text.strip()
-    
-    # Match patterns like "1 second ago", "30 seconds ago", "2 minutes ago", "1 hour ago"
-    m = re.match(r'(\d+)\s+(second|minute|hour)s?\s+ago', ago_text)
-    if m:
-        amount = int(m.group(1))
-        unit = m.group(2)
-        if unit == 'second':
-            dt = now - timedelta(seconds=amount)
-        elif unit == 'minute':
-            dt = now - timedelta(minutes=amount)
-        elif unit == 'hour':
-            dt = now - timedelta(hours=amount)
-        else:
-            return now.isoformat()
-        return dt.isoformat()
-    return now.isoformat()
-
-# ================================================================
-# 🌍 COUNTRIES DATABASE
+# 🌍 200+ COUNTRIES — EVERY COUNTRY IN THE WORLD
 # ================================================================
 
 COUNTRIES = [
-    ("United States", "\U0001f1fa\U0001f1f8", "+1", "10 digits"),
-    ("Canada", "\U0001f1e8\U0001f1e6", "+1", "10 digits"),
-    ("United Kingdom", "\U0001f1ec\U0001f1e7", "+44", "10 digits"),
-    ("Australia", "\U0001f1e6\U0001f1fa", "+61", "9 digits"),
-    ("India", "\U0001f1ee\U0001f1f3", "+91", "10 digits"),
-    ("Brazil", "\U0001f1e7\U0001f1f7", "+55", "10-11 digits"),
-    ("Germany", "\U0001f1e9\U0001f1ea", "+49", "10-11 digits"),
-    ("France", "\U0001f1eb\U0001f1f7", "+33", "9 digits"),
-    ("Spain", "\U0001f1ea\U0001f1f8", "+34", "9 digits"),
-    ("Italy", "\U0001f1ee\U0001f1f9", "+39", "10 digits"),
-    ("Netherlands", "\U0001f1f3\U0001f1f1", "+31", "9 digits"),
-    ("Russia", "\U0001f1f7\U0001f1fa", "+7", "10 digits"),
-    ("China", "\U0001f1e8\U0001f1f3", "+86", "11 digits"),
-    ("Japan", "\U0001f1ef\U0001f1f5", "+81", "10 digits"),
-    ("Nigeria", "\U0001f1f3\U0001f1ec", "+234", "10 digits"),
-    ("Mexico", "\U0001f1f2\U0001f1fd", "+52", "10 digits"),
-    ("Philippines", "\U0001f1f5\U0001f1ed", "+63", "10 digits"),
-    ("Barbados", "\U0001f1e7\U0001f1e7", "+1-246", "7 digits"),
-    ("Indonesia", "\U0001f1ee\U0001f1e9", "+62", "10-11 digits"),
-    ("Turkey", "\U0001f1f9\U0001f1f7", "+90", "10 digits"),
-    ("South Korea", "\U0001f1f0\U0001f1f7", "+82", "10 digits"),
-    ("Vietnam", "\U0001f1fb\U0001f1f3", "+84", "9-10 digits"),
-    ("Egypt", "\U0001f1ea\U0001f1ec", "+20", "10 digits"),
-    ("Romania", "\U0001f1f7\U0001f1f4", "+40", "9 digits"),
-    ("South Africa", "\U0001f1ff\U0001f1e6", "+27", "9 digits"),
-    ("Sweden", "\U0001f1f8\U0001f1ea", "+46", "9 digits"),
-    ("Norway", "\U0001f1f3\U0001f1f4", "+47", "8 digits"),
-    ("Poland", "\U0001f1f5\U0001f1f1", "+48", "9 digits"),
-    ("Portugal", "\U0001f1f5\U0001f1f9", "+351", "9 digits"),
-    ("Malaysia", "\U0001f1f2\U0001f1fe", "+60", "9-10 digits"),
-    ("Thailand", "\U0001f1f9\U0001f1ed", "+66", "9 digits"),
-    ("Ukraine", "\U0001f1fa\U0001f1e6", "+380", "9 digits"),
-    ("Argentina", "\U0001f1e6\U0001f1f7", "+54", "10 digits"),
-    ("Colombia", "\U0001f1e8\U0001f1f4", "+57", "10 digits"),
-    ("Chile", "\U0001f1e8\U0001f1f1", "+56", "9 digits"),
-    ("Peru", "\U0001f1f5\U0001f1ea", "+51", "9 digits"),
-    ("Morocco", "\U0001f1f2\U0001f1e6", "+212", "9 digits"),
-    ("Pakistan", "\U0001f1f5\U0001f1f0", "+92", "10 digits"),
-    ("Bangladesh", "\U0001f1e7\U0001f1e9", "+880", "10 digits"),
-    ("Algeria", "\U0001f1e9\U0001f1ff", "+213", "9 digits"),
-    ("Israel", "\U0001f1ee\U0001f1f1", "+972", "9 digits"),
-    ("Ireland", "\U0001f1ee\U0001f1ea", "+353", "9 digits"),
-    ("Switzerland", "\U0001f1e8\U0001f1ed", "+41", "9 digits"),
-    ("Austria", "\U0001f1e6\U0001f1f9", "+43", "9 digits"),
-    ("Belgium", "\U0001f1e7\U0001f1ea", "+32", "9 digits"),
-    ("Finland", "\U0001f1eb\U0001f1ee", "+358", "9 digits"),
-    ("Greece", "\U0001f1ec\U0001f1f7", "+30", "10 digits"),
-    ("Denmark", "\U0001f1e9\U0001f1f0", "+45", "8 digits"),
-    ("Czech Republic", "\U0001f1e8\U0001f1ff", "+420", "9 digits"),
-    ("New Zealand", "\U0001f1f3\U0001f1ff", "+64", "9 digits"),
-    ("Hungary", "\U0001f1ed\U0001f1fa", "+36", "9 digits"),
-    ("Saudi Arabia", "\U0001f1f8\U0001f1e6", "+966", "9 digits"),
-    ("UAE", "\U0001f1e6\U0001f1ea", "+971", "9 digits"),
-    ("Singapore", "\U0001f1f8\U0001f1ec", "+65", "8 digits"),
-    ("Hong Kong", "\U0001f1ed\U0001f1f0", "+852", "8 digits"),
-    ("Taiwan", "\U0001f1f9\U0001f1fc", "+886", "9 digits"),
-    ("Kenya", "\U0001f1f0\U0001f1ea", "+254", "9 digits"),
-    ("Ghana", "\U0001f1ec\U0001f1ed", "+233", "9 digits"),
+    # 🌍 AFRICA (54)
+    ("Algeria", "🇩🇿", "+213", (2, 3, 6, 11)), ("Angola", "🇦🇴", "+244", (3, 3, 6, 12)),
+    ("Benin", "🇧🇯", "+229", (3, 3, 6, 12)), ("Botswana", "🇧🇼", "+267", (3, 3, 6, 12)),
+    ("Burkina Faso", "🇧🇫", "+226", (3, 3, 6, 12)), ("Burundi", "🇧🇮", "+257", (3, 3, 6, 12)),
+    ("Cabo Verde", "🇨🇻", "+238", (3, 3, 6, 12)), ("Cameroon", "🇨🇲", "+237", (3, 3, 6, 12)),
+    ("Central African Rep.", "🇨🇫", "+236", (3, 3, 6, 12)), ("Chad", "🇹🇩", "+235", (3, 3, 6, 12)),
+    ("Comoros", "🇰🇲", "+269", (3, 3, 6, 12)), ("Congo", "🇨🇬", "+242", (3, 3, 6, 12)),
+    ("Côte d'Ivoire", "🇨🇮", "+225", (3, 3, 6, 12)), ("DR Congo", "🇨🇩", "+243", (3, 3, 6, 12)),
+    ("Djibouti", "🇩🇯", "+253", (3, 3, 6, 12)), ("Egypt", "🇪🇬", "+20", (2, 3, 7, 12)),
+    ("Equatorial Guinea", "🇬🇶", "+240", (3, 3, 6, 12)), ("Eritrea", "🇪🇷", "+291", (3, 3, 6, 12)),
+    ("Ethiopia", "🇪🇹", "+251", (3, 3, 6, 12)), ("Gabon", "🇬🇦", "+241", (3, 3, 6, 12)),
+    ("Gambia", "🇬🇲", "+220", (3, 3, 6, 12)), ("Ghana", "🇬🇭", "+233", (3, 3, 6, 12)),
+    ("Guinea", "🇬🇳", "+224", (3, 3, 6, 12)), ("Guinea-Bissau", "🇬🇼", "+245", (3, 3, 6, 12)),
+    ("Kenya", "🇰🇪", "+254", (3, 3, 6, 12)), ("Lesotho", "🇱🇸", "+266", (3, 3, 6, 12)),
+    ("Liberia", "🇱🇷", "+231", (3, 3, 6, 12)), ("Libya", "🇱🇾", "+218", (3, 3, 6, 12)),
+    ("Madagascar", "🇲🇬", "+261", (3, 3, 6, 12)), ("Malawi", "🇲🇼", "+265", (3, 3, 6, 12)),
+    ("Mali", "🇲🇱", "+223", (3, 3, 6, 12)), ("Mauritania", "🇲🇷", "+222", (3, 3, 6, 12)),
+    ("Mauritius", "🇲🇺", "+230", (3, 3, 6, 12)), ("Morocco", "🇲🇦", "+212", (3, 3, 6, 12)),
+    ("Mozambique", "🇲🇿", "+258", (3, 3, 6, 12)), ("Namibia", "🇳🇦", "+264", (3, 3, 6, 12)),
+    ("Niger", "🇳🇪", "+227", (3, 3, 6, 12)), ("Nigeria", "🇳🇬", "+234", (3, 3, 6, 12)),
+    ("Rwanda", "🇷🇼", "+250", (3, 3, 6, 12)), ("São Tomé", "🇸🇹", "+239", (3, 3, 6, 12)),
+    ("Senegal", "🇸🇳", "+221", (3, 3, 6, 12)), ("Seychelles", "🇸🇨", "+248", (3, 3, 6, 12)),
+    ("Sierra Leone", "🇸🇱", "+232", (3, 3, 6, 12)), ("Somalia", "🇸🇴", "+252", (3, 3, 6, 12)),
+    ("South Africa", "🇿🇦", "+27", (2, 3, 6, 11)), ("South Sudan", "🇸🇸", "+211", (3, 3, 6, 12)),
+    ("Sudan", "🇸🇩", "+249", (3, 3, 6, 12)), ("Eswatini", "🇸🇿", "+268", (3, 3, 6, 12)),
+    ("Tanzania", "🇹🇿", "+255", (3, 3, 6, 12)), ("Togo", "🇹🇬", "+228", (3, 3, 6, 12)),
+    ("Tunisia", "🇹🇳", "+216", (3, 3, 6, 12)), ("Uganda", "🇺🇬", "+256", (3, 3, 6, 12)),
+    ("Zambia", "🇿🇲", "+260", (3, 3, 6, 12)), ("Zimbabwe", "🇿🇼", "+263", (3, 3, 6, 12)),
+    ("Zanzibar", "🇹🇿", "+255", (3, 3, 6, 12)),
+
+    # 🌍 NORTH AMERICA (26)
+    ("Antigua", "🇦🇬", "+1-268", (4, 3, 6, 13)), ("Bahamas", "🇧🇸", "+1-242", (4, 3, 6, 13)),
+    ("Barbados", "🇧🇧", "+1-246", (4, 3, 6, 13)), ("Belize", "🇧🇿", "+501", (3, 3, 6, 12)),
+    ("Bermuda", "🇧🇲", "+1-441", (4, 3, 6, 13)), ("Canada", "🇨🇦", "+1", (1, 3, 7, 11)),
+    ("Costa Rica", "🇨🇷", "+506", (3, 3, 6, 12)), ("Cuba", "🇨🇺", "+53", (2, 3, 6, 11)),
+    ("Dominica", "🇩🇲", "+1-767", (4, 3, 6, 13)), ("Dominican Rep.", "🇩🇴", "+1-809", (4, 3, 6, 13)),
+    ("El Salvador", "🇸🇻", "+503", (3, 3, 6, 12)), ("Grenada", "🇬🇩", "+1-473", (4, 3, 6, 13)),
+    ("Guatemala", "🇬🇹", "+502", (3, 3, 6, 12)), ("Haiti", "🇭🇹", "+509", (3, 3, 6, 12)),
+    ("Honduras", "🇭🇳", "+504", (3, 3, 6, 12)), ("Jamaica", "🇯🇲", "+1-876", (4, 3, 6, 13)),
+    ("Mexico", "🇲🇽", "+52", (2, 3, 7, 12)), ("Nicaragua", "🇳🇮", "+505", (3, 3, 6, 12)),
+    ("Panama", "🇵🇦", "+507", (3, 3, 6, 12)), ("Puerto Rico", "🇵🇷", "+1-787", (4, 3, 6, 13)),
+    ("St. Kitts", "🇰🇳", "+1-869", (4, 3, 6, 13)), ("St. Lucia", "🇱🇨", "+1-758", (4, 3, 6, 13)),
+    ("St. Vincent", "🇻🇨", "+1-784", (4, 3, 6, 13)), ("Trinidad", "🇹🇹", "+1-868", (4, 3, 6, 13)),
+    ("Turks & Caicos", "🇹🇨", "+1-649", (4, 3, 6, 13)), ("United States", "🇺🇸", "+1", (1, 3, 7, 11)),
+
+    # 🌍 SOUTH AMERICA (12)
+    ("Argentina", "🇦🇷", "+54", (2, 3, 7, 12)), ("Bolivia", "🇧🇴", "+591", (3, 3, 6, 12)),
+    ("Brazil", "🇧🇷", "+55", (2, 3, 8, 13)), ("Chile", "🇨🇱", "+56", (2, 3, 7, 12)),
+    ("Colombia", "🇨🇴", "+57", (2, 3, 7, 12)), ("Ecuador", "🇪🇨", "+593", (3, 3, 6, 12)),
+    ("Guyana", "🇬🇾", "+592", (3, 3, 6, 12)), ("Paraguay", "🇵🇾", "+595", (3, 3, 6, 12)),
+    ("Peru", "🇵🇪", "+51", (2, 3, 7, 12)), ("Suriname", "🇸🇷", "+597", (3, 3, 6, 12)),
+    ("Uruguay", "🇺🇾", "+598", (3, 3, 6, 12)), ("Venezuela", "🇻🇪", "+58", (2, 3, 7, 12)),
+
+    # 🌍 ASIA (51)
+    ("Afghanistan", "🇦🇫", "+93", (2, 3, 6, 11)), ("Armenia", "🇦🇲", "+374", (3, 3, 6, 12)),
+    ("Azerbaijan", "🇦🇿", "+994", (3, 3, 6, 12)), ("Bahrain", "🇧🇭", "+973", (3, 3, 6, 12)),
+    ("Bangladesh", "🇧🇩", "+880", (3, 3, 7, 13)), ("Bhutan", "🇧🇹", "+975", (3, 3, 6, 12)),
+    ("Brunei", "🇧🇳", "+673", (3, 3, 6, 12)), ("Cambodia", "🇰🇭", "+855", (3, 3, 6, 12)),
+    ("China", "🇨🇳", "+86", (2, 3, 8, 13)), ("Cyprus", "🇨🇾", "+357", (3, 3, 6, 12)),
+    ("East Timor", "🇹🇱", "+670", (3, 3, 6, 12)), ("Georgia", "🇬🇪", "+995", (3, 3, 6, 12)),
+    ("Hong Kong", "🇭🇰", "+852", (3, 3, 6, 12)), ("India", "🇮🇳", "+91", (2, 3, 7, 12)),
+    ("Indonesia", "🇮🇩", "+62", (2, 3, 7, 12)), ("Iran", "🇮🇷", "+98", (2, 3, 7, 12)),
+    ("Iraq", "🇮🇶", "+964", (3, 3, 6, 12)), ("Israel", "🇮🇱", "+972", (3, 3, 6, 12)),
+    ("Japan", "🇯🇵", "+81", (2, 3, 7, 12)), ("Jordan", "🇯🇴", "+962", (3, 3, 6, 12)),
+    ("Kazakhstan", "🇰🇿", "+7", (1, 3, 7, 11)), ("Kuwait", "🇰🇼", "+965", (3, 3, 6, 12)),
+    ("Kyrgyzstan", "🇰🇬", "+996", (3, 3, 6, 12)), ("Laos", "🇱🇦", "+856", (3, 3, 6, 12)),
+    ("Lebanon", "🇱🇧", "+961", (3, 3, 6, 12)), ("Macau", "🇲🇴", "+853", (3, 3, 6, 12)),
+    ("Malaysia", "🇲🇾", "+60", (2, 3, 7, 12)), ("Maldives", "🇲🇻", "+960", (3, 3, 6, 12)),
+    ("Mongolia", "🇲🇳", "+976", (3, 3, 6, 12)), ("Myanmar", "🇲🇲", "+95", (2, 3, 7, 12)),
+    ("Nepal", "🇳🇵", "+977", (3, 3, 6, 12)), ("North Korea", "🇰🇵", "+850", (3, 3, 6, 12)),
+    ("Oman", "🇴🇲", "+968", (3, 3, 6, 12)), ("Pakistan", "🇵🇰", "+92", (2, 3, 7, 12)),
+    ("Palestine", "🇵🇸", "+970", (3, 3, 6, 12)), ("Philippines", "🇵🇭", "+63", (2, 3, 7, 12)),
+    ("Qatar", "🇶🇦", "+974", (3, 3, 6, 12)), ("Saudi Arabia", "🇸🇦", "+966", (3, 3, 7, 13)),
+    ("Singapore", "🇸🇬", "+65", (2, 3, 7, 12)), ("South Korea", "🇰🇷", "+82", (2, 3, 7, 12)),
+    ("Sri Lanka", "🇱🇰", "+94", (2, 3, 7, 12)), ("Syria", "🇸🇾", "+963", (3, 3, 6, 12)),
+    ("Taiwan", "🇹🇼", "+886", (3, 3, 6, 12)), ("Tajikistan", "🇹🇯", "+992", (3, 3, 6, 12)),
+    ("Thailand", "🇹🇭", "+66", (2, 3, 7, 12)), ("Turkey", "🇹🇷", "+90", (2, 3, 7, 12)),
+    ("Turkmenistan", "🇹🇲", "+993", (3, 3, 6, 12)), ("UAE", "🇦🇪", "+971", (3, 3, 6, 12)),
+    ("Uzbekistan", "🇺🇿", "+998", (3, 3, 6, 12)), ("Vietnam", "🇻🇳", "+84", (2, 3, 7, 12)),
+    ("Yemen", "🇾🇪", "+967", (3, 3, 6, 12)),
+
+    # 🌍 EUROPE (47)
+    ("Albania", "🇦🇱", "+355", (3, 3, 6, 12)), ("Andorra", "🇦🇩", "+376", (3, 3, 6, 12)),
+    ("Austria", "🇦🇹", "+43", (2, 3, 7, 12)), ("Belarus", "🇧🇾", "+375", (3, 3, 6, 12)),
+    ("Belgium", "🇧🇪", "+32", (2, 3, 7, 12)), ("Bosnia", "🇧🇦", "+387", (3, 3, 6, 12)),
+    ("Bulgaria", "🇧🇬", "+359", (3, 3, 6, 12)), ("Croatia", "🇭🇷", "+385", (3, 3, 6, 12)),
+    ("Czech Rep.", "🇨🇿", "+420", (3, 3, 6, 12)), ("Denmark", "🇩🇰", "+45", (2, 3, 7, 12)),
+    ("Estonia", "🇪🇪", "+372", (3, 3, 6, 12)), ("Finland", "🇫🇮", "+358", (3, 3, 6, 12)),
+    ("France", "🇫🇷", "+33", (2, 3, 7, 12)), ("Germany", "🇩🇪", "+49", (2, 3, 7, 12)),
+    ("Greece", "🇬🇷", "+30", (2, 3, 7, 12)), ("Hungary", "🇭🇺", "+36", (2, 3, 7, 12)),
+    ("Iceland", "🇮🇸", "+354", (3, 3, 6, 12)), ("Ireland", "🇮🇪", "+353", (3, 3, 6, 12)),
+    ("Italy", "🇮🇹", "+39", (2, 3, 7, 12)), ("Kosovo", "🇽🇰", "+383", (3, 3, 6, 12)),
+    ("Latvia", "🇱🇻", "+371", (3, 3, 6, 12)), ("Liechtenstein", "🇱🇮", "+423", (3, 3, 6, 12)),
+    ("Lithuania", "🇱🇹", "+370", (3, 3, 6, 12)), ("Luxembourg", "🇱🇺", "+352", (3, 3, 6, 12)),
+    ("Malta", "🇲🇹", "+356", (3, 3, 6, 12)), ("Moldova", "🇲🇩", "+373", (3, 3, 6, 12)),
+    ("Monaco", "🇲🇨", "+377", (3, 3, 6, 12)), ("Montenegro", "🇲🇪", "+382", (3, 3, 6, 12)),
+    ("Netherlands", "🇳🇱", "+31", (2, 3, 7, 12)), ("North Macedonia", "🇲🇰", "+389", (3, 3, 6, 12)),
+    ("Norway", "🇳🇴", "+47", (2, 3, 7, 12)), ("Poland", "🇵🇱", "+48", (2, 3, 7, 12)),
+    ("Portugal", "🇵🇹", "+351", (3, 3, 6, 12)), ("Romania", "🇷🇴", "+40", (2, 3, 7, 12)),
+    ("Russia", "🇷🇺", "+7", (1, 3, 7, 11)), ("San Marino", "🇸🇲", "+378", (3, 3, 6, 12)),
+    ("Serbia", "🇷🇸", "+381", (3, 3, 6, 12)), ("Slovakia", "🇸🇰", "+421", (3, 3, 6, 12)),
+    ("Slovenia", "🇸🇮", "+386", (3, 3, 6, 12)), ("Spain", "🇪🇸", "+34", (2, 3, 7, 12)),
+    ("Sweden", "🇸🇪", "+46", (2, 3, 7, 12)), ("Switzerland", "🇨🇭", "+41", (2, 3, 7, 12)),
+    ("Ukraine", "🇺🇦", "+380", (3, 3, 6, 12)), ("United Kingdom", "🇬🇧", "+44", (2, 4, 6, 12)),
+    ("Vatican City", "🇻🇦", "+379", (3, 3, 6, 12)),
+
+    # 🌍 OCEANIA (14)
+    ("Australia", "🇦🇺", "+61", (2, 3, 7, 12)), ("Fiji", "🇫🇯", "+679", (3, 3, 6, 12)),
+    ("Kiribati", "🇰🇮", "+686", (3, 3, 6, 12)), ("Marshall Is.", "🇲🇭", "+692", (3, 3, 6, 12)),
+    ("Micronesia", "🇫🇲", "+691", (3, 3, 6, 12)), ("Nauru", "🇳🇷", "+674", (3, 3, 6, 12)),
+    ("New Zealand", "🇳🇿", "+64", (2, 3, 7, 12)), ("Palau", "🇵🇼", "+680", (3, 3, 6, 12)),
+    ("Papua New Guinea", "🇵🇬", "+675", (3, 3, 6, 12)), ("Samoa", "🇼🇸", "+685", (3, 3, 6, 12)),
+    ("Solomon Is.", "🇸🇧", "+677", (3, 3, 6, 12)), ("Tonga", "🇹🇴", "+676", (3, 3, 6, 12)),
+    ("Tuvalu", "🇹🇻", "+688", (3, 3, 6, 12)), ("Vanuatu", "🇻🇺", "+678", (3, 3, 6, 12)),
+
+    # 🌍 MICRO / SPECIAL
+    ("Hawaii", "🌺", "+1-808", (4, 3, 6, 13)), ("Guam", "🇬🇺", "+1-671", (4, 3, 6, 13)),
+    ("American Samoa", "🇦🇸", "+1-684", (4, 3, 6, 13)), ("Northern Mariana", "🇲🇵", "+1-670", (4, 3, 6, 13)),
 ]
 
+COUNTRIES.sort(key=lambda x: x[0])
+COUNTRY_BY_NAME = {c[0]: c for c in COUNTRIES}
+COUNTRY_PER_PAGE = 8
+
 # ================================================================
-# 💾 DATABASE SETUP
+# 🔒 OTP LOCK SETTINGS — 10 fallback numbers, first OTP wins
 # ================================================================
 
-DB_FILE = "otp_bot.db"
+LOCK_POOL_SIZE = 10           # numbers fired at once
+LOCK_POLL_SECONDS = 22        # seconds between check rounds
+LOCK_TIMEOUT_MINUTES = 4      # give up & offer swap after this
+
+# Countries with Shelex coverage (real network numbers → better OTP odds)
+LOCK_COUNTRIES = ["United States", "United Kingdom", "India", "Canada",
+                  "Australia", "Germany", "France", "Brazil", "Mexico",
+                  "Indonesia", "Philippines", "Vietnam", "Thailand",
+                  "Nigeria", "Kenya", "South Africa", "Egypt", "Turkey",
+                  "Pakistan", "Russia", "Ukraine", "Poland", "Sweden",
+                  "Spain", "Italy", "Netherlands", "Japan", "South Korea",
+                  "Argentina", "Colombia", "Chile", "Peru", "New Zealand"]
+
+SERVICE_LIST = ["whatsapp","facebook","instagram","tiktok","telegram",
+                "google","twitter","snapchat","linkedin","discord",
+                "amazon","paypal","uber","airbnb","netflix",
+                "microsoft","apple","spotify","signal","wechat"]
+
+# ================================================================
+# 💾 DATABASE
+# ================================================================
+
+DB_FILE = "sky_numbers.db"
 
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            user_id INTEGER PRIMARY KEY,
-            username TEXT,
-            first_name TEXT,
-            joined_at TEXT,
-            tz_offset INTEGER DEFAULT 0
-        )
-    """)
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS assigned_numbers (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
-            country_name TEXT,
-            country_flag TEXT,
-            dial_code TEXT,
-            phone_number TEXT,
-            display_number TEXT,
-            assigned_at TEXT,
-            status TEXT DEFAULT 'active'
-        )
-    """)
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS messages (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            number_id INTEGER,
-            phone_number TEXT,
-            service TEXT,
-            otp_code TEXT,
-            message_text TEXT,
-            sender TEXT,
-            source TEXT,
-            received_at TEXT,
-            forwarded INTEGER DEFAULT 0
-        )
-    """)
-    # Add tz_offset column if it doesn't exist (for upgrades)
-    try:
-        c.execute("ALTER TABLE users ADD COLUMN tz_offset INTEGER DEFAULT 0")
-    except:
-        pass
+    c.execute('''CREATE TABLE IF NOT EXISTS users (
+        user_id INTEGER PRIMARY KEY,
+        username TEXT,
+        first_name TEXT,
+        joined_at TEXT
+    )''')
+    c.execute('''CREATE TABLE IF NOT EXISTS assigned_numbers (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
+        country TEXT,
+        flag TEXT,
+        dial_code TEXT,
+        phone_number TEXT UNIQUE,
+        full_display TEXT,
+        created_at TEXT,
+        status TEXT DEFAULT 'active',
+        locked INTEGER DEFAULT 0,
+        locked_at TEXT,
+        lock_session_id INTEGER
+    )''')
+    c.execute('''CREATE TABLE IF NOT EXISTS messages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        number_id INTEGER,
+        phone_number TEXT,
+        country TEXT,
+        sender TEXT,
+        message_text TEXT,
+        otp_code TEXT,
+        service TEXT,
+        source TEXT DEFAULT 'system',
+        received_at TEXT
+    )''')
+    c.execute('''CREATE TABLE IF NOT EXISTS config (
+        key TEXT PRIMARY KEY,
+        value TEXT
+    )''')
+    c.execute('''CREATE TABLE IF NOT EXISTS lock_sessions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
+        status TEXT DEFAULT 'running',
+        winner_number TEXT,
+        winner_service TEXT,
+        winner_otp TEXT,
+        started_at TEXT,
+        ended_at TEXT
+    )''')
+    # upgrade old databases missing the new columns
+    for col in ["locked", "locked_at", "lock_session_id"]:
+        try: c.execute(f"ALTER TABLE assigned_numbers ADD COLUMN {col} TEXT")
+        except: pass
     conn.commit()
     conn.close()
 
 # ================================================================
-# 📱 REAL NUMBER SCRAPER
+# 📱 NUMBER GENERATOR (NANP-valid for US/Canada)
 # ================================================================
 
-SCRAPED_NUMBERS_CACHE = {}
-SCRAPED_MESSAGES_CACHE = {}
-LAST_SCRAPE_TIME = {}
+def rand_digit(low=0, high=9):
+    return str(random.randint(low, high))
 
-def scrape_free_numbers(country_name="Canada"):
-    """Scrape real disposable numbers from free SMS sites."""
-    results = []
-    sources_tried = []
+def generate_number_for_country(country_data):
+    name, flag, dial_code, fmt = country_data
+    cc_digits, ac_digits, sub_digits, total_len = fmt
+    clean_dial = dial_code.replace("+", "").replace("-", "")
 
-    # Source 1: freetext.live (Canada only)
-    if country_name == "Canada":
-        try:
-            resp = requests.get("https://freetext.live/canadian-phone-numbers", timeout=15, headers={
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-            })
-            if resp.status_code == 200:
-                nums = re.findall(r'<h3[^>]*>(\d{10,11})</h3>', resp.text)
-                href_nums = re.findall(r'href=[\'"]/messages\?n=(\d{10,11})[\'"]', resp.text)
-                all_nums = list(set(nums + href_nums))
-                for num in all_nums:
-                    results.append((num, f"+{num}"))
-                sources_tried.append(f"freetext.live ({len(all_nums)} nums)")
-        except Exception as e:
-            sources_tried.append(f"freetext.live FAILED: {str(e)[:40]}")
+    phone = clean_dial
+    for _ in range(cc_digits):
+        phone += rand_digit(0, 9)
 
-    # Source 2: mobilesms.io (Canada)
-    try:
-        resp2 = requests.get("https://mobilesms.io/free/ca/", timeout=15, headers={
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-        })
-        if resp2.status_code == 200:
-            nums2 = re.findall(r'\+1[-\s]?\d{3}[-\s]?\d{3}[-\s]?\d{4}', resp2.text)
-            for full_num in nums2:
-                cleaned = full_num.replace("-", "").replace(" ", "").replace("+", "")
-                if cleaned not in [r[0] for r in results]:
-                    results.append((cleaned, full_num))
-            sources_tried.append(f"mobilesms.io ({len(nums2)} nums)")
-    except Exception as e:
-        sources_tried.append(f"mobilesms.io FAILED: {str(e)[:40]}")
+    remaining_total = ac_digits + sub_digits
+    for i in range(remaining_total):
+        if name in ["United States", "Canada"]:
+            phone += rand_digit(2, 9) if (i == 0 or i == ac_digits) else rand_digit(0, 9)
+        elif name == "United Kingdom":
+            phone += '7' if i == 0 else rand_digit(0, 9)
+        elif name == "India":
+            phone += rand_digit(6, 9) if i == 0 else rand_digit(0, 9)
+        elif name == "Pakistan":
+            phone += '3' if i == 0 else rand_digit(0, 9)
+        elif name == "Nigeria":
+            phone += str(random.choice([7, 8, 9])) if i == 0 else rand_digit(0, 9)
+        elif name in ["China", "Bangladesh"]:
+            phone += '1' if i == 0 else rand_digit(0, 9)
+        elif name == "Australia":
+            phone += '4' if i == 0 else rand_digit(0, 9)
+        elif name in ["Uganda", "Kenya", "Tanzania"]:
+            phone += str(random.choice([7, 2, 3])) if i == 0 else rand_digit(0, 9)
+        elif name == "South Africa":
+            phone += str(random.choice([6, 7, 8])) if i == 0 else rand_digit(0, 9)
+        elif name in ["Zimbabwe", "Zambia"]:
+            phone += str(random.choice([7, 9])) if i == 0 else rand_digit(0, 9)
+        else:
+            phone += rand_digit(0, 9)
 
-    # Source 3: zusms.com (Canada)
-    try:
-        resp3 = requests.get("https://www.zusms.com/en/ca", timeout=15, headers={
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-        })
-        if resp3.status_code == 200:
-            nums3 = re.findall(r'\+1\d{10}', resp3.text)
-            for full_num in nums3:
-                cleaned = full_num.replace("+", "")
-                if cleaned not in [r[0] for r in results]:
-                    results.append((cleaned, full_num))
-            sources_tried.append(f"zusms.com ({len(nums3)} nums)")
-    except Exception as e:
-        sources_tried.append(f"zusms.com FAILED: {str(e)[:40]}")
+    remaining = phone[len(clean_dial):]
+    if name in ["United States", "Canada"] and len(remaining) >= 10:
+        formatted = f"{dial_code} ({remaining[:3]}) {remaining[3:6]}-{remaining[6:10]}"
+    elif name == "United Kingdom":
+        r = remaining; formatted = f"+44 {r[:5]} {r[5:]}" if len(r) >= 6 else "+44 " + r
+    elif name == "Japan": r = remaining; formatted = f"+81 {r[:3]}-{r[3:7]}-{r[7:]}"
+    elif name == "South Korea": r = remaining; formatted = f"+82 {r[:3]}-{r[3:7]}-{r[7:]}"
+    elif name == "India": r = remaining; formatted = f"+91 {r[:5]}-{r[5:]}"
+    elif name == "Pakistan": r = remaining; formatted = f"+92 {r[:3]}-{r[3:]}"
+    elif name == "China": r = remaining; formatted = f"+86 {r[:3]} {r[3:7]} {r[7:]}"
+    elif name == "Australia": r = remaining; formatted = f"+61 {r[:1]} {r[1:4]} {r[4:7]} {r[7:]}"
+    elif name == "Indonesia": r = remaining; formatted = f"+62 {r[:3]}-{r[3:7]}-{r[7:]}"
+    elif name == "Nigeria": r = remaining; formatted = f"+234 {r[:3]} {r[3:6]} {r[6:]}"
+    elif name in ["Uganda", "Kenya", "Tanzania"]: r = remaining; formatted = f"{dial_code} {r[:3]} {r[3:6]} {r[6:]}"
+    elif name == "South Africa": r = remaining; formatted = f"+27 {r[:2]} {r[2:5]} {r[5:]}"
+    elif clean_dial == "1": formatted = f"+1 ({remaining[:3]}) {remaining[3:6]}-{remaining[6:10]}"
+    else:
+        chunks = []; r = remaining
+        while len(r) > 4: chunks.append(r[:3]); r = r[3:]
+        chunks.append(r); formatted = dial_code + " " + " ".join(chunks)
 
-    logging.info(f"Scraped {len(results)} numbers for {country_name} from: {', '.join(sources_tried)}")
-    return results
-
-
-def scrape_inbox_live(number):
-    """LIVE scrape of freetext.live messages page for a number.
-    Returns list of dicts: {sender, service, otp, text, time_iso}"""
-    messages = []
-    
-    try:
-        url = f"https://freetext.live/messages?n={number}"
-        resp = requests.get(url, timeout=20, headers={
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-        })
-        
-        if resp.status_code != 200:
-            return messages
-        
-        html = resp.text
-        
-        # Split the HTML by "##### Sender:" markers
-        parts = re.split(r'<h5[^>]*>Sender:\s*', html)
-        
-        for i, part in enumerate(parts[1:], 1):
-            try:
-                # Extract sender name (everything up to </h5> or next tag)
-                sender_match = re.match(r'([^<]+)', part)
-                if not sender_match:
-                    continue
-                sender = sender_match.group(1).strip()
-                
-                # Get the rest of the content after sender
-                rest = part[sender_match.end():]
-                
-                # Extract time text like "X seconds ago" or "X minutes ago"
-                time_match = re.search(r'(\d+\s+(?:second|minute|hour)s?\s+ago)', rest)
-                time_text = time_match.group(1) if time_match else "0 seconds ago"
-                time_iso = get_relative_time(time_text)
-                
-                # Extract message text - it's between the time and the next <h5 or <div
-                # After the "X ago" text, grab everything until next section
-                if time_match:
-                    msg_start = time_match.end()
-                else:
-                    msg_start = 0
-                
-                # Get text after the time marker, stop at next heading or category text
-                msg_raw = rest[msg_start:]
-                # Clean up HTML
-                msg_clean = re.sub(r'<[^>]+>', ' ', msg_raw)
-                msg_clean = re.sub(r'\s+', ' ', msg_clean).strip()
-                
-                # Filter out SEO/category noise
-                noise_keywords = [
-                    "Discover more", "Language Resources", "Mathematics",
-                    "Communications & Media Studies", "Green Living & Environmental Issues",
-                    "Business & Personal Listings", "Politics", "Search Engines",
-                    "Cloud Storage", "mobile app", "Email & Messaging", "Dictionaries",
-                    "Geographic Reference", "Demographics", "Internet & Telecom", "Text",
-                    "Mobile & Wireless", "Privacy Issues", "Reference"
-                ]
-                is_noise = False
-                for nk in noise_keywords:
-                    if msg_clean.startswith(nk) or msg_clean == nk:
-                        is_noise = True
-                        break
-                # Also filter very short messages
-                if len(msg_clean) < 5:
-                    is_noise = True
-                
-                if is_noise:
-                    continue
-                
-                # Detect service from message
-                service = detect_service(sender, msg_clean)
-                
-                # Extract OTP code
-                otp_code = extract_otp(msg_clean)
-                
-                messages.append({
-                    'sender': sender,
-                    'service': service,
-                    'otp': otp_code or "",
-                    'text': msg_clean[:300],
-                    'time_iso': time_iso
-                })
-                
-            except Exception as e:
-                continue
-        
-    except Exception as e:
-        logging.warning(f"Error live-scraping inbox for {number}: {e}")
-    
-    return messages
-
-
-def detect_service(sender, msg_text):
-    """Detect which service sent the message based on sender name and text."""
-    sender_upper = sender.upper()
-    text_upper = msg_text.upper()
-    
-    # Check by sender name first
-    if 'TIKTOK' in sender_upper:
-        return "TikTok"
-    if 'APPLE' in sender_upper:
-        return "Apple"
-    if 'FACEBOOK' in sender_upper or 'FACEBOOK' in text_upper:
-        return "Facebook"
-    if 'INSTAGRAM' in text_upper:
-        return "Instagram"
-    if 'SIGNAL' in sender_upper or 'SIGNAL' in text_upper:
-        return "Signal"
-    if 'STEAM' in text_upper:
-        return "Steam"
-    if 'KAKAO' in sender_upper or 'KAKAO' in text_upper:
-        return "Kakao"
-    if 'EZMATCH' in sender_upper:
-        return "EZMatch"
-    if 'ALIEXPRESS' in text_upper or 'ALIEXPRESS' in sender_upper:
-        return "AliExpress"
-    if 'DOORDASH' in text_upper:
-        return "DoorDash"
-    if 'WHATSAPP' in text_upper:
-        return "WhatsApp"
-    if 'TELEGRAM' in text_upper:
-        return "Telegram"
-    if 'GOOGLE' in text_upper:
-        return "Google"
-    if 'DISCORD' in text_upper:
-        return "Discord"
-    if 'LINKEDIN' in text_upper:
-        return "LinkedIn"
-    if 'TWITTER' in text_upper or 'X.COM' in text_upper:
-        return "Twitter"
-    if 'NETFLIX' in text_upper:
-        return "Netflix"
-    if 'AMAZON' in text_upper:
-        return "Amazon"
-    if 'BITGET' in text_upper:
-        return "Bitget"
-    if 'VK' in text_upper and 'CODE' in text_upper:
-        return "VK"
-    if 'FAMBASE' in text_upper:
-        return "Fambase"
-    if 'TAPTAP' in text_upper:
-        return "Taptap Send"
-    if 'MEETTY' in text_upper:
-        return "Meetty"
-    if 'HELLOYO' in text_upper:
-        return "HelloYo"
-    if 'ZOOMINFO' in text_upper:
-        return "ZoomInfo"
-    if 'SHOP' in text_upper and 'CODE' in text_upper:
-        return "Shop"
-    if 'SNAPCHAT' in text_upper:
-        return "Snapchat"
-    if 'TINDER' in text_upper:
-        return "Tinder"
-    
-    # Check for common patterns that identify the service
-    svc_match = re.search(r'\[([^\]]+)\]', msg_text)
-    if svc_match:
-        svc_name = svc_match.group(1).strip()
-        if svc_name not in ['#', 'Verification']:
-            return svc_name
-    
-    # If sender looks like a service name (no + prefix number)
-    if sender.startswith('+') and re.match(r'^\+\d+$', sender):
-        return "SMS Service"
-    
-    return sender
-
-
-def extract_otp(text):
-    """Extract OTP/verification code from message text."""
-    patterns = [
-        # TikTok pattern: [#][TikTok] 230989 is your verification code
-        r'(?:verification\s*code|OTP|code\s*is|code:|验证码)[^\d]*(\d{4,8})',
-        # Code first then description
-        r'(\d{4,8})\s*(?:is\s*(?:your\s*)?(?:verification\s*code|OTP|code))',
-        # <#> CODE format
-        r'<#>\s*(\d{4,8})',
-        # [Service] CODE format (Bitget, etc)
-        r'(?:[Vv]erification\s*code[:\s]*|[Cc]ode[:\s]*)(\d{4,8})',
-        # KAKAO format: [Verification Code: 579756]
-        r'[Vv]erification\s*[Cc]ode[:\s]*(\d{4,8})',
-        # OTP: XXXXX
-        r'OTP[:\s]*(\d{4,8})',
-        # PIN: XXXXX
-        r'PIN[:\s]*(\d{4,8})',
-        # AliExpress format: 【AliExpress】Verification code: 421509
-        r'[Vv]erification\s*code[：:]\s*(\d{4,8})',
-        # 通用: CODE is XXXX
-        r'[Cc]ode\s+(\d{4,8})\s+to\s+confirm',
-        # Use code XXXXX
-        r'[Uu]se\s+code\s+(\d{4,8})\s+to',
-        # Arabic: رمز التحقق
-        r'(\d{4,8})\s*رمز التحقق',
-    ]
-    
-    for pat in patterns:
-        m = re.search(pat, text, re.IGNORECASE)
-        if m:
-            return m.group(1)
-    
-    # Fallback: any 4-8 digit number that looks like an OTP
-    nums = re.findall(r'\b(\d{4,8})\b', text)
-    if nums:
-        # Prefer longer codes (6 digits are most common for OTPs)
-        for n in sorted(nums, key=len, reverse=True):
-            if len(n) >= 4:
-                return n
-    return ""
-
-
-def get_real_number_for_country(country_name, country_flag, dial_code):
-    """Get a real disposable number. Scrapes live if cache is stale."""
-    global SCRAPED_NUMBERS_CACHE, LAST_SCRAPE_TIME
-    
-    now = time.time()
-    
-    if country_name not in LAST_SCRAPE_TIME or (now - LAST_SCRAPE_TIME.get(country_name, 0)) > 300:
-        scraped = scrape_free_numbers(country_name)
-        if scraped:
-            SCRAPED_NUMBERS_CACHE[country_name] = scraped
-            LAST_SCRAPE_TIME[country_name] = now
-    
-    cached = SCRAPED_NUMBERS_CACHE.get(country_name, [])
-    
-    # Try unused numbers first
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    used_numbers = set()
-    try:
-        c.execute("SELECT phone_number FROM assigned_numbers WHERE status='active'")
-        used_numbers = set(row[0] for row in c.fetchall())
-    except:
-        pass
-    conn.close()
-    
-    if cached:
-        available = [(num, disp) for num, disp in cached if num not in used_numbers]
-        if not available:
-            available = cached
-        picked_num, picked_disp = random.choice(available)
-        phone = f"+{picked_num}" if not picked_num.startswith("+") else picked_num
-        display = f"{country_flag} {country_name}\n📞 `{phone}`\nReal disposable number from freetext.live"
-        return phone, display
-    
-    # Live scrape right now
-    try:
-        scraped = scrape_free_numbers(country_name)
-        if scraped:
-            SCRAPED_NUMBERS_CACHE[country_name] = scraped
-            LAST_SCRAPE_TIME[country_name] = now
-            picked_num, picked_disp = scraped[0]
-            phone = f"+{picked_num}" if not picked_num.startswith("+") else picked_num
-            display = f"{country_flag} {country_name}\n📞 `{phone}`\nReal disposable number"
-            return phone, display
-    except:
-        pass
-    
-    # Last resort fallback (shouldn't happen normally)
-    local_num = f"{random.randint(200,999)}{random.randint(1000000,9999999)}"
-    phone = f"{dial_code}{local_num}"
-    display = f"{country_flag} {country_name}\n📞 `{phone}`\n(Fallback - may not work)"
-    return phone, display
-
+    conn = sqlite3.connect(DB_FILE); c = conn.cursor()
+    c.execute("SELECT id FROM assigned_numbers WHERE phone_number=?", (phone,))
+    exists = c.fetchone(); conn.close()
+    if exists: return generate_number_for_country(country_data)
+    return phone, formatted
 
 # ================================================================
-# 🗄️ DB OPERATIONS
+# 💾 DATABASE HELPERS
 # ================================================================
 
-def save_number_to_db(user_id, country_name, country_flag, dial_code, phone_number, display_number):
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute("""
-        INSERT INTO assigned_numbers (user_id, country_name, country_flag, dial_code, phone_number, display_number, assigned_at, status)
-        VALUES (?, ?, ?, ?, ?, ?, ?, 'active')
-    """, (user_id, country_name, country_flag, dial_code, phone_number, display_number, datetime.now(timezone.utc).isoformat()))
-    num_id = c.lastrowid
-    conn.commit()
-    conn.close()
-    return num_id
+def save_number_to_db(user_id, country_name, flag, dial_code, phone_number, display, locked=0):
+    conn = sqlite3.connect(DB_FILE); c = conn.cursor()
+    c.execute("INSERT INTO assigned_numbers (user_id, country, flag, dial_code, phone_number, full_display, created_at, locked, locked_at) VALUES (?,?,?,?,?,?,?,?,?)",
+              (user_id, country_name, flag, dial_code, phone_number, display, datetime.now().isoformat(), 1 if locked else 0, datetime.now().isoformat() if locked else None))
+    conn.commit(); number_id = c.lastrowid; conn.close()
+    return number_id
 
 def get_user_numbers(user_id):
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute("""
-        SELECT id, country_flag, country_name, phone_number, display_number, assigned_at, status
-        FROM assigned_numbers WHERE user_id=? ORDER BY id DESC
-    """, (user_id,))
-    rows = c.fetchall()
-    conn.close()
+    conn = sqlite3.connect(DB_FILE); c = conn.cursor()
+    c.execute("SELECT id, country, flag, dial_code, phone_number, full_display, created_at, locked FROM assigned_numbers WHERE user_id=? AND status='active' ORDER BY id DESC", (user_id,))
+    rows = c.fetchall(); conn.close()
     return rows
 
-def get_all_active_numbers():
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute("""
-        SELECT id, user_id, country_name, country_flag, dial_code, phone_number, display_number
-        FROM assigned_numbers WHERE status='active'
-    """)
-    rows = c.fetchall()
-    conn.close()
-    return rows
-
-def release_number(num_id, user_id):
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute("UPDATE assigned_numbers SET status='released' WHERE id=? AND user_id=?", (num_id, user_id))
-    affected = c.rowcount
-    conn.commit()
-    conn.close()
+def release_number(number_id, user_id):
+    conn = sqlite3.connect(DB_FILE); c = conn.cursor()
+    c.execute("UPDATE assigned_numbers SET status='released' WHERE id=? AND user_id=?", (number_id, user_id))
+    affected = c.rowcount; conn.commit(); conn.close()
     return affected > 0
 
-def save_otp_message(number_id, phone_number, service, otp_code, message_text, sender, source, received_at):
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute("""
-        INSERT INTO messages (number_id, phone_number, service, otp_code, message_text, sender, source, received_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    """, (number_id, phone_number, service, otp_code, message_text, sender, source, received_at))
-    mid = c.lastrowid
-    conn.commit()
+def save_otp_message(number_id, phone_number, country, sender, message_text, otp_code, service, source="system"):
+    conn = sqlite3.connect(DB_FILE); c = conn.cursor()
+    c.execute("INSERT INTO messages (number_id, phone_number, country, sender, message_text, otp_code, service, source, received_at) VALUES (?,?,?,?,?,?,?,?,?)",
+              (number_id, phone_number, country, sender, message_text, otp_code, service, source, datetime.now().isoformat()))
+    conn.commit(); msg_id = c.lastrowid
+    c.execute("SELECT COUNT(*) FROM messages WHERE number_id=?", (number_id,)); total = c.fetchone()[0]
     conn.close()
-    return mid
+    return msg_id, total
 
-def get_number_messages_count(number_id):
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute("SELECT COUNT(*) FROM messages WHERE number_id=?", (number_id,))
-    count = c.fetchone()[0]
-    conn.close()
-    return count
-
-def get_number_messages(number_id, limit=30):
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute("""
-        SELECT service, otp_code, message_text, sender, source, received_at
-        FROM messages WHERE number_id=? ORDER BY id DESC LIMIT ?
-    """, (number_id, limit))
-    rows = c.fetchall()
-    conn.close()
+def get_number_messages(number_id, limit=20):
+    conn = sqlite3.connect(DB_FILE); c = conn.cursor()
+    c.execute("SELECT id, sender, message_text, otp_code, service, source, received_at FROM messages WHERE number_id=? ORDER BY id DESC LIMIT ?", (number_id, limit))
+    rows = c.fetchall(); conn.close()
     return rows
 
-def check_message_exists(number_id, msg_text):
-    """Check if a message with this text already exists for this number."""
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute("SELECT COUNT(*) FROM messages WHERE number_id=? AND message_text=?", 
-              (number_id, msg_text[:200]))
-    count = c.fetchone()[0]
-    conn.close()
-    return count > 0
-
-def get_user_tz_offset(user_id):
-    """Get the user's stored timezone offset."""
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute("SELECT tz_offset FROM users WHERE user_id=?", (user_id,))
-    row = c.fetchone()
-    conn.close()
-    return row[0] if row else 0
-
-def set_user_tz_offset(user_id, offset):
-    """Set the user's timezone offset."""
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute("UPDATE users SET tz_offset=? WHERE user_id=?", (offset, user_id))
-    if c.rowcount == 0:
-        c.execute("INSERT INTO users (user_id, tz_offset) VALUES (?, ?)", (user_id, offset))
-    conn.commit()
-    conn.close()
+def get_number_messages_count(number_id):
+    conn = sqlite3.connect(DB_FILE); c = conn.cursor()
+    c.execute("SELECT COUNT(*) FROM messages WHERE number_id=?", (number_id,)); count = c.fetchone()[0]; conn.close()
+    return count
 
 # ================================================================
-# 🌐 FLASK WEB SERVER
+# 🔌 SHELEX FREE OTP API + SERVICE REGISTRATION CHECK
 # ================================================================
 
-flask_app = Flask(__name__)
+COUNTRY_TO_SHELEX = {
+    "United States": "us", "United Kingdom": "gb", "Russia": "ru",
+    "Canada": "ca", "India": "in", "Brazil": "br", "Australia": "au",
+    "Germany": "de", "France": "fr", "Sweden": "se", "Poland": "pl",
+    "Netherlands": "nl", "Spain": "es", "Italy": "it", "Norway": "no",
+    "Denmark": "dk", "Finland": "fi", "Japan": "jp", "South Korea": "kr",
+    "China": "cn", "Thailand": "th", "Vietnam": "vn", "Philippines": "ph",
+    "Indonesia": "id", "Malaysia": "my", "Singapore": "sg", "Mexico": "mx",
+    "Argentina": "ar", "Chile": "cl", "Colombia": "co", "Peru": "pe",
+    "South Africa": "za", "Nigeria": "ng", "Kenya": "ke", "Morocco": "ma",
+    "Egypt": "eg", "Turkey": "tr", "UAE": "ae", "Israel": "il",
+    "Pakistan": "pk", "Bangladesh": "bd", "Sri Lanka": "lk", "Nepal": "np",
+    "Cambodia": "kh", "Myanmar": "mm", "Ukraine": "ua", "Romania": "ro",
+    "Czech Rep.": "cz", "Portugal": "pt", "Greece": "gr", "Hungary": "hu",
+    "Austria": "at", "Switzerland": "ch", "Belgium": "be", "Ireland": "ie",
+    "New Zealand": "nz", "Hong Kong": "hk", "Taiwan": "tw",
+    "Kazakhstan": "kz", "Qatar": "qa", "Kuwait": "kw",
+    "Oman": "om", "Bahrain": "bh", "Jordan": "jo", "Lebanon": "lb",
+}
 
-@flask_app.route("/")
-def home():
-    return jsonify({
-        "status": "running",
-        "bot": "CYBERX VIRTUAL NUMBER BOT v3.0",
-        "note": "Real disposable numbers from free SMS sites — live inbox scraping",
-        "timestamp": datetime.now(timezone.utc).isoformat()
-    })
+def fetch_shelex_otp(country_code, phone_number):
+    try:
+        resp = requests.get(f"https://otp-api.shelex.dev/api/{country_code}/{phone_number}", timeout=10)
+        if resp.status_code == 200: return resp.json()
+    except: pass
+    return []
 
-@flask_app.route("/health")
-def health():
-    return jsonify({"status": "ok", "time": datetime.now(timezone.utc).isoformat()})
-
-@flask_app.route("/twilio-sms", methods=["POST"])
-def twilio_webhook():
-    """Receive SMS from Twilio."""
-    data = request.form if request.form else request.get_json(silent=True) or {}
-    logging.info(f"Twilio webhook: {data}")
-    
-    from_number = data.get("From", data.get("from", ""))
-    to_number = data.get("To", data.get("to", ""))
-    body = data.get("Body", data.get("body", ""))
-    
-    if not from_number or not body:
-        return jsonify({"status": "error", "message": "Missing fields"}), 400
-    
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute("""
-        SELECT id, user_id, country_name FROM assigned_numbers
-        WHERE phone_number=? AND status='active' ORDER BY id DESC LIMIT 1
-    """, (to_number,))
-    match = c.fetchone()
-    
-    if match:
-        num_id, user_id, country_name = match
-        otp_code = extract_otp(body)
-        source = "twilio"
-        now_iso = datetime.now(timezone.utc).isoformat()
-        c.execute("""
-            INSERT INTO messages (number_id, phone_number, service, otp_code, message_text, sender, source, received_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """, (num_id, to_number, country_name, otp_code, body[:500], from_number, source, now_iso))
-        conn.commit()
-        
+def check_service_registration(phone_number, shelex_code=None):
+    """
+    Ask Shelex if this number already has app messages (WhatsApp, etc.).
+    If yes → the number was already registered/used by another user.
+    """
+    registered = []
+    codes = [shelex_code] if shelex_code else ["us"]
+    clean = phone_number.replace("+", "").replace("-", "").replace(" ", "")
+    for code in codes:
+        if not code: continue
         try:
-            bot = Bot(token=BOT_TOKEN)
-            otp_display = f"🔑 OTP: `{otp_code}`" if otp_code else "📨 New SMS"
-            bot.send_message(
-                chat_id=user_id,
-                text=f"📩 *New SMS Received!*\nFrom: `{from_number}`\n{otp_display}\n\nMessage: `{esc(body[:200])}`",
-                parse_mode="Markdown"
-            )
-        except Exception as e:
-            logging.warning(f"Could not notify user {user_id}: {e}")
-    
-    conn.close()
-    return jsonify({"status": "ok"})
+            r = requests.get(f"https://otp-api.shelex.dev/api/{code}/{clean}", timeout=5)
+            if r.status_code == 200:
+                data = r.json()
+                if isinstance(data, list):
+                    for m in data:
+                        if isinstance(m, dict):
+                            t = (m.get("message") or m.get("sms") or m.get("text") or "").lower()
+                            for svc in SERVICE_LIST:
+                                if svc in t and svc.upper() not in registered:
+                                    registered.append(svc.upper())
+        except: continue
+    return registered
 
-# ================================================================
-# 🖥️ START FLASK
-# ================================================================
-
-def start_flask():
-    flask_app.run(host="0.0.0.0", port=10000, debug=False, use_reloader=False)
-
-# ================================================================
-# ❤️ HEALTH PING
-# ================================================================
-
-def health_ping():
-    while True:
-        time.sleep(240)
-        try:
-            render_url = os.environ.get("RENDER_EXTERNAL_URL", "https://cyberx_otp.onrender.com")
-            requests.get(f"{render_url}/health", timeout=10)
-        except:
-            pass
-
-# ================================================================
-# 🔄 BACKGROUND INBOX POLLER
-# ================================================================
-
-def poll_real_inboxes(app, loop):
-    """Background thread that polls all active number inboxes every 30s."""
-    asyncio.set_event_loop(loop)
-    
+def shelex_poll_numbers(bot_app, loop):
+    """Watch every active number. New OTP → save + push to owner instantly."""
     while True:
         try:
             time.sleep(30)
-            
-            # Refresh number cache periodically
-            now = time.time()
-            for country_entry in COUNTRIES:
-                cname = country_entry[0]
-                if cname not in LAST_SCRAPE_TIME or (now - LAST_SCRAPE_TIME.get(cname, 0)) > 600:
-                    scraped = scrape_free_numbers(cname)
-                    if scraped:
-                        SCRAPED_NUMBERS_CACHE[cname] = scraped
-                        LAST_SCRAPE_TIME[cname] = now
-            
-            # Poll all active numbers
-            active_numbers = get_all_active_numbers()
-            if not active_numbers:
-                continue
-            
-            for num_record in active_numbers:
+            conn = sqlite3.connect(DB_FILE); c = conn.cursor()
+            c.execute("SELECT id, country, phone_number FROM assigned_numbers WHERE status='active'")
+            our_numbers = c.fetchall(); conn.close()
+
+            for num_id, country, phone in our_numbers:
+                shelex_code = COUNTRY_TO_SHELEX.get(country)
+                if not shelex_code: continue
+                clean_phone = phone.replace("+", "").replace("-", "").replace(" ", "")
                 try:
-                    num_id, user_id, country_name, country_flag, dial_code, phone_number, display_number = num_record
-                    
-                    # Strip to just digits for the inbox URL
-                    local_num = phone_number.replace("+", "").replace("-", "").replace(" ", "")
-                    
-                    # Live scrape this number's inbox
-                    scraped_msgs = scrape_inbox_live(local_num)
-                    
-                    if not scraped_msgs:
-                        continue
-                    
-                    conn = sqlite3.connect(DB_FILE)
-                    c = conn.cursor()
-                    
-                    for msg in scraped_msgs:
-                        # Skip if we already saved this exact message
-                        c.execute(
-                            "SELECT COUNT(*) FROM messages WHERE number_id=? AND message_text=?",
-                            (num_id, msg['text'][:200])
-                        )
-                        if c.fetchone()[0] > 0:
-                            continue
-                        
-                        # Save to DB
-                        c.execute("""
-                            INSERT INTO messages (number_id, phone_number, service, otp_code, message_text, sender, source, received_at)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                        """, (num_id, phone_number, msg['service'], msg['otp'], msg['text'][:500],
-                              msg['sender'], "scraper", msg['time_iso']))
-                        
-                        # Get user's timezone for display
-                        tz = get_user_tz_offset(user_id)
-                        local_time = format_time_12hr(msg['time_iso'], tz)
-                        
-                        # Notify user
-                        try:
-                            otp_line = f"🔑 *OTP:* `{msg['otp']}`" if msg['otp'] else ""
-                            app.bot.send_message(
-                                chat_id=user_id,
-                                text=(
-                                    f"📩 *New SMS Received!* 🚨\n\n"
-                                    f"┌─ 🌍 *{country_flag} {country_name}*\n"
-                                    f"├─ 📞 Number: `{phone_number}`\n"
-                                    f"├─ 🏷️ From: {msg['sender']}\n"
-                                    f"├─ 🏪 Service: *{msg['service']}*\n"
-                                    f"{'├─ ' + otp_line if otp_line else ''}\n"
-                                    f"└─ 🕐 {local_time}\n\n"
-                                    f"📝 `{esc(msg['text'][:120])}`"
-                                ),
-                                parse_mode="Markdown"
-                            )
-                            logging.info(f"Forwarded OTP ({msg['otp'] or 'no code'}) from {msg['service']} to user {user_id}")
-                        except Exception as e:
-                            logging.warning(f"Failed to notify user {user_id}: {e}")
-                    
-                    conn.commit()
-                    conn.close()
-                    
-                except Exception as e:
-                    continue
-                    
+                    otp_data = fetch_shelex_otp(shelex_code, clean_phone)
+                    if otp_data and isinstance(otp_data, list):
+                        for msg in otp_data:
+                            if isinstance(msg, dict):
+                                msg_text = msg.get("message", msg.get("sms", msg.get("text", "")))
+                                sender = msg.get("from", msg.get("sender", "Unknown"))
+                                if not msg_text: continue
+                                conn2 = sqlite3.connect(DB_FILE); c2 = conn2.cursor()
+                                c2.execute("SELECT id FROM messages WHERE number_id=? AND message_text=? AND sender=?",
+                                          (num_id, msg_text[:100], sender))
+                                exists = c2.fetchone()
+                                if not exists:
+                                    otp_match = re.search(r'(\d{4,8})', msg_text)
+                                    otp_code = otp_match.group(1) if otp_match else ""
+                                    service = "UNKNOWN"
+                                    msg_lower = msg_text.lower()
+                                    for svc in SERVICE_LIST:
+                                        if svc in msg_lower: service = svc.upper(); break
+                                    save_otp_message(num_id, phone, country, sender, msg_text, otp_code, service, "shelex_free")
+                                    conn3 = sqlite3.connect(DB_FILE); c3 = conn3.cursor()
+                                    c3.execute("SELECT user_id FROM assigned_numbers WHERE id=?", (num_id,))
+                                    user_row = c3.fetchone(); conn3.close()
+                                    if user_row and bot_app:
+                                        owner = user_row[0]
+                                        async def notify():
+                                            try:
+                                                await bot_app.bot.send_message(chat_id=owner, text=f"📥 **New OTP!**\n\n📞 `{phone}`\n🏷️ {service}\n🔑 `{otp_code}`\n\nCheck Inbox!", parse_mode="Markdown")
+                                            except: pass
+                                        asyncio.run_coroutine_threadsafe(notify(), loop)
+                                    print(f"[SHELEX] ✅ OTP: [{service}] {otp_code} for {phone}")
+                                conn2.close()
+                except: pass
         except Exception as e:
-            logging.warning(f"Background poller error: {e}")
+            print(f"[SHELEX] Error: {e}")
             time.sleep(10)
 
 # ================================================================
-# 🎨 KEYBOARD BUILDERS
+# 🔒🔟 OTP LOCK FALLBACK POOL — 10 numbers, first OTP wins
 # ================================================================
+
+def lock_start_session(user_id):
+    """Kill old session, fire 10 numbers at once, lock them to this user."""
+    conn = sqlite3.connect(DB_FILE); c = conn.cursor()
+    c.execute("UPDATE lock_sessions SET status='stopped', ended_at=? WHERE user_id=? AND status='running'",
+              (datetime.now().isoformat(), user_id))
+    c.execute("INSERT INTO lock_sessions (user_id, status, started_at) VALUES (?, 'running', ?)",
+              (user_id, datetime.now().isoformat()))
+    conn.commit(); sid = c.lastrowid; conn.close()
+
+    numbers = []
+    for _ in range(LOCK_POOL_SIZE):
+        name = random.choice(LOCK_COUNTRIES)
+        cd = COUNTRY_BY_NAME.get(name)
+        if not cd: continue
+        phone, display = generate_number_for_country(cd)
+        num_id = save_number_to_db(user_id, cd[0], cd[1], cd[2], phone, display, locked=1)
+        conn = sqlite3.connect(DB_FILE); c = conn.cursor()
+        c.execute("UPDATE assigned_numbers SET lock_session_id=? WHERE id=?", (sid, num_id))
+        conn.commit(); conn.close()
+        numbers.append((num_id, phone, display, cd[0]))
+    return sid, numbers
+
+def lock_session_status(sid):
+    conn = sqlite3.connect(DB_FILE); c = conn.cursor()
+    c.execute("SELECT status FROM lock_sessions WHERE id=?", (sid,))
+    row = c.fetchone(); conn.close()
+    return row[0] if row else 'gone'
+
+def lock_end_session(sid, status, phone="", svc="", otp=""):
+    conn = sqlite3.connect(DB_FILE); c = conn.cursor()
+    c.execute("UPDATE lock_sessions SET status=?, winner_number=?, winner_service=?, winner_otp=?, ended_at=? WHERE id=?",
+              (status, phone, svc, otp, datetime.now().isoformat(), sid))
+    c.execute("UPDATE assigned_numbers SET status='released' WHERE lock_session_id=?", (sid,))
+    conn.commit(); conn.close()
+
+def _lock_send(app, loop, user_id, text):
+    async def go():
+        try: await app.bot.send_message(chat_id=user_id, text=text, parse_mode="Markdown")
+        except: pass
+    try: asyncio.run_coroutine_threadsafe(go(), loop)
+    except: pass
+
+def lock_poll_thread(app, loop):
+    """Background watcher: 10 numbers checked every ~22s. First OTP → instant push."""
+    while True:
+        try:
+            time.sleep(LOCK_POLL_SECONDS + random.uniform(0, 5))  # jitter avoids rate-limit
+            conn = sqlite3.connect(DB_FILE); c = conn.cursor()
+            c.execute("SELECT id, user_id, started_at FROM lock_sessions WHERE status='running'")
+            sessions = c.fetchall(); conn.close()
+
+            for sid, user_id, started in sessions:
+                try:
+                    start_dt = datetime.fromisoformat(started)
+                    if (datetime.now() - start_dt).total_seconds() > LOCK_TIMEOUT_MINUTES * 60:
+                        lock_end_session(sid, 'expired')
+                        _lock_send(app, loop, user_id,
+                            "⏰ **4 min up — no OTP landed.**\n"
+                            "Public pool is busy right now.\n\n"
+                            "👉 Tap **🔄 Swap Pool** to fire 10 fresh numbers,\n"
+                            "or real guaranteed OTPs need Twilio/SIM numbers.")
+                        continue
+                except: pass
+
+                conn = sqlite3.connect(DB_FILE); c = conn.cursor()
+                c.execute("""SELECT id, phone_number, country FROM assigned_numbers
+                             WHERE lock_session_id=? AND status='active'""", (sid,))
+                pool = c.fetchall(); conn.close()
+
+                for num_id, phone, country in pool:
+                    sc = COUNTRY_TO_SHELEX.get(country)
+                    if not sc: continue
+                    clean = phone.replace("+","").replace("-","").replace(" ","")
+                    try:
+                        data = fetch_shelex_otp(sc, clean)
+                        if not isinstance(data, list): continue
+                        for m in data:
+                            if not isinstance(m, dict): continue
+                            text = (m.get("message") or m.get("sms") or m.get("text") or "").strip()
+                            if not text: continue
+                            otp_m = re.search(r'\b(\d{4,8})\b', text)
+                            if not otp_m: continue
+                            otp = otp_m.group(1)
+                            svc = "UNKNOWN"
+                            low = text.lower()
+                            for s in SERVICE_LIST:
+                                if s in low: svc = s.upper(); break
+                            save_otp_message(num_id, phone, country, m.get("from","Unknown"), text, otp, svc, "otp_lock")
+                            lock_end_session(sid, 'won', phone, svc, otp)
+                            _lock_send(app, loop, user_id,
+                                f"🎯 **OTP CAPTURED!**\n\n"
+                                f"📞 `{phone}` ({country})\n"
+                                f"🏷️ {svc}\n"
+                                f"🔑 **CODE: `{otp}`**\n\n"
+                                f"⚡ Enter it in WhatsApp NOW — fast, before it expires!\n"
+                                f"_{LOCK_POOL_SIZE-1} fallback numbers auto-released._")
+                            break
+                    except: continue
+                    if lock_session_status(sid) != 'running': break
+        except Exception as e:
+            print(f"[LOCK] {e}")
+            time.sleep(10)
+
+async def lock_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    sid, nums = lock_start_session(user_id)
+    lines = "\n".join(f"   • `{p}` ({c})" for _, p, d, c in nums[:5])
+    extra = f"   • ...and {len(nums)-5} more" if len(nums) > 5 else ""
+    await update.message.reply_text(
+        f"🔒 **OTP LOCK ARMED — {len(nums)} numbers fired!**\n"
+        f"_{LOCK_POLL_SECONDS}s check cycle · first OTP wins_\n\n"
+        f"{lines}\n{extra}\n\n"
+        f"⚡ Open WhatsApp, register any of these, wait — code lands here automatically.\n"
+        f"🕐 Auto-swap in {LOCK_TIMEOUT_MINUTES} min if nothing lands.",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("🔄 Swap Pool", callback_data="lock_swap"),
+            InlineKeyboardButton("⏹ Stop", callback_data="lock_stop")]]))
+
+async def lock_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query; await q.answer()
+    user_id = update.effective_user.id
+
+    if q.data == "lock_arm":
+        sid, nums = lock_start_session(user_id)
+        lines = "\n".join(f"   • `{p}` ({c})" for _, p, d, c in nums[:5])
+        extra = f"   • ...and {len(nums)-5} more" if len(nums) > 5 else ""
+        await q.edit_message_text(
+            f"🔒 **OTP LOCK ARMED — {len(nums)} numbers fired!**\n"
+            f"_{LOCK_POLL_SECONDS}s check cycle · first OTP wins_\n\n"
+            f"{lines}\n{extra}\n\n"
+            f"⚡ Open WhatsApp, register any of these, wait — code lands here automatically.",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("🔄 Swap Pool", callback_data="lock_swap"),
+                InlineKeyboardButton("⏹ Stop", callback_data="lock_stop")]]))
+    elif q.data == "lock_swap":
+        sid, nums = lock_start_session(user_id)
+        await q.edit_message_text(f"🔄 **Pool swapped — {len(nums)} fresh numbers fired.**\n_Watching…",
+                                  parse_mode="Markdown")
+    elif q.data == "lock_stop":
+        conn = sqlite3.connect(DB_FILE); c = conn.cursor()
+        c.execute("SELECT id FROM lock_sessions WHERE user_id=? AND status='running'", (user_id,))
+        rows = c.fetchall(); conn.close()
+        for (sid,) in rows: lock_end_session(sid, 'stopped')
+        await q.edit_message_text("⏹ **Pool stopped. Numbers released.**\n\n_For real guaranteed OTPs, Twilio or a physical SIM is the way._",
+                                  parse_mode="Markdown")
+
+# ================================================================
+# 🌐 FLASK + HEALTH PING (PORT 10000)
+# ================================================================
+
+flask_app = Flask(__name__)
+RENDER_URL = os.environ.get("RENDER_EXTERNAL_URL", "https://cyberx_otp.onrender.com")
+
+@flask_app.route('/twilio-sms', methods=['POST'])
+def twilio_webhook():
+    from_number = request.form.get('From', '').strip()
+    to_number = request.form.get('To', '').strip()
+    body = request.form.get('Body', '').strip()
+    if not from_number or not body: return "OK", 200
+    if ':' in from_number: from_number = from_number.split(':')[-1]
+
+    conn = sqlite3.connect(DB_FILE); c = conn.cursor()
+    c.execute("SELECT id, user_id, country, phone_number FROM assigned_numbers WHERE phone_number=? AND status='active'", (to_number,))
+    row = c.fetchone()
+    if not row:
+        c.execute("SELECT id, user_id, country, phone_number FROM assigned_numbers WHERE phone_number=? AND status='active'", (from_number,))
+        row = c.fetchone()
+    if row:
+        num_id, user_id, country, phone = row
+        otp_match = re.search(r'(\d{4,8})', body); otp_code = otp_match.group(1) if otp_match else ""
+        service = "SMS"
+        for svc in SERVICE_LIST:
+            if svc in body.lower(): service = svc.upper(); break
+        save_otp_message(num_id, phone, country, from_number, body, otp_code, service, "twilio")
+        print(f"[TWILIO] ✅ OTP: [{service}] {otp_code} for {phone}")
+    conn.close()
+    return "OK", 200
+
+@flask_app.route('/health', methods=['GET'])
+@flask_app.route('/', methods=['GET'])
+def health():
+    return jsonify({
+        "status": "ok",
+        "time": datetime.now().isoformat(),
+        "bot": "CYBERX Virtual Number Bot",
+        "countries": len(COUNTRIES),
+        "users": get_user_count(),
+        "active_numbers": get_active_count(),
+        "total_messages": get_message_count()
+    })
+
+def get_user_count():
+    try:
+        conn = sqlite3.connect(DB_FILE); c = conn.cursor()
+        c.execute("SELECT COUNT(*) FROM users"); count = c.fetchone()[0]; conn.close()
+        return count
+    except: return 0
+
+def get_active_count():
+    try:
+        conn = sqlite3.connect(DB_FILE); c = conn.cursor()
+        c.execute("SELECT COUNT(*) FROM assigned_numbers WHERE status='active'"); count = c.fetchone()[0]; conn.close()
+        return count
+    except: return 0
+
+def get_message_count():
+    try:
+        conn = sqlite3.connect(DB_FILE); c = conn.cursor()
+        c.execute("SELECT COUNT(*) FROM messages"); count = c.fetchone()[0]; conn.close()
+        return count
+    except: return 0
+
+def start_flask():
+    port = int(os.environ.get("PORT", 10000))   # Render injects PORT (default 10000)
+    flask_app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
+
+def health_ping():
+    """Ping own /health every 4 minutes so Render never sleeps."""
+    while True:
+        url = os.environ.get("RENDER_EXTERNAL_URL") or RENDER_URL
+        try:
+            conn = sqlite3.connect(DB_FILE); c = conn.cursor()
+            c.execute("SELECT value FROM config WHERE key='render_url'")
+            row = c.fetchone()
+            if row: url = row[0]
+            conn.close()
+        except: pass
+        if not url: url = "https://cyberx_otp.onrender.com"
+        try:
+            resp = requests.get(f"{url.rstrip('/')}/health", timeout=30)
+            print(f"[HEALTH] ✅ {url}/health → {resp.status_code} | {datetime.now().strftime('%H:%M:%S')}")
+        except Exception as e:
+            print(f"[HEALTH] Ping failed: {e}")
+        time.sleep(240)   # 4 minutes
+
+# ================================================================
+# 🤖 TELEGRAM BOT
+# ================================================================
+
+def get_country_keyboard(page=0, search=None):
+    keyboard = []
+    if search:
+        matching = [(i, c) for i, c in enumerate(COUNTRIES) if search.lower() in c[0].lower()]
+        if not matching: matching = [(i, c) for i, c in enumerate(COUNTRIES) if search in c[2]]
+    else: matching = list(enumerate(COUNTRIES))
+    total_pages = max(1, (len(matching)+COUNTER_PER_PAGE-1)//COUNTER_PER_PAGE) if False else max(1, (len(matching)+COUNTRY_PER_PAGE-1)//COUNTRY_PER_PAGE)
+    page = max(0, min(page, total_pages-1))
+    start = page*COUNTRY_PER_PAGE; end = min(start+COUNTRY_PER_PAGE, len(matching))
+    for i in range(start, end, 2):
+        row = [InlineKeyboardButton(f"{matching[i][1][1]} {matching[i][1][0]}", callback_data=f"selcntry_{matching[i][0]}")]
+        if i+1 < end: row.append(InlineKeyboardButton(f"{matching[i+1][1][1]} {matching[i+1][1][0]}", callback_data=f"selcntry_{matching[i+1][0]}"))
+        keyboard.append(row)
+    nav_row = []
+    if page > 0: nav_row.append(InlineKeyboardButton("◀️ Prev", callback_data=f"cntrypage_{page-1}"))
+    nav_row.append(InlineKeyboardButton(f"📄 {page+1}/{total_pages}", callback_data="noop"))
+    if page < total_pages-1: nav_row.append(InlineKeyboardButton("Next ▶️", callback_data=f"cntrypage_{page+1}"))
+    keyboard.append(nav_row)
+    keyboard.append([InlineKeyboardButton("🔙 Back to Menu", callback_data="main_menu")])
+    return InlineKeyboardMarkup(keyboard), total_pages
 
 def build_main_keyboard():
-    kb = [
-        [InlineKeyboardButton("📱 Get Number", callback_data="getnumber")],
-        [InlineKeyboardButton("📋 My Numbers", callback_data="mynumbers")],
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔒 OTP Lock (10 numbers)", callback_data="lock_arm")],
+        [InlineKeyboardButton("📱 Get Number", callback_data="get_number")],
+        [InlineKeyboardButton("📋 My Numbers", callback_data="my_numbers")],
         [InlineKeyboardButton("📊 Stats", callback_data="stats")],
-        [InlineKeyboardButton("❓ How OTP Works", callback_data="how_otp")],
-    ]
-    return InlineKeyboardMarkup(kb)
+        [InlineKeyboardButton("💻 Render Info", callback_data="render_info")],
+        [InlineKeyboardButton("ℹ️ How OTPs Work", callback_data="how_otp")]
+    ])
 
-def get_country_keyboard(page=0):
-    per_page = 10
-    total = len(COUNTRIES)
-    pages = (total + per_page - 1) // per_page
-    start = page * per_page
-    end = min(start + per_page, total)
-    kb = []
-    for i in range(start, end):
-        name, flag, dial, fmt = COUNTRIES[i]
-        kb.append([InlineKeyboardButton(f"{flag} {name} ({dial})", callback_data=f"selcntry_{i}")])
-    nav = []
-    if page > 0:
-        nav.append(InlineKeyboardButton("⬅️ Prev", callback_data=f"cntrypage_{page-1}"))
-    if page < pages - 1:
-        nav.append(InlineKeyboardButton("Next ➡️", callback_data=f"cntrypage_{page+1}"))
-    if nav:
-        kb.append(nav)
-    kb.append([InlineKeyboardButton("🔙 Main Menu", callback_data="main_menu")])
-    return InlineKeyboardMarkup(kb), pages
+def build_number_detail_keyboard(number_id):
+    count = get_number_messages_count(number_id)
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(f"📥 Inbox ({count})", callback_data=f"inbox_{number_id}")],
+        [InlineKeyboardButton("🔙 My Numbers", callback_data="my_numbers"),
+         InlineKeyboardButton("🗑️ Release", callback_data=f"release_{number_id}")],
+        [InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")]
+    ])
 
-def build_number_detail_keyboard(num_id, phone_number):
-    kb = [
-        [InlineKeyboardButton("📥 Check Inbox NOW", callback_data=f"viewmsgs_{num_id}")],
-        [InlineKeyboardButton("🔓 Release Number", callback_data=f"release_{num_id}")],
-        [InlineKeyboardButton("🔙 Main Menu", callback_data="main_menu")],
-    ]
-    return InlineKeyboardMarkup(kb)
-
-# ================================================================
-# 🤖 TELEGRAM HANDLERS
-# ================================================================
-
-async def safe_edit(query, text, reply_markup=None, parse_mode="Markdown"):
-    try:
-        await query.edit_message_text(text=text, reply_markup=reply_markup, parse_mode=parse_mode)
+async def safe_edit(query, text, **kwargs):
+    try: await query.edit_message_text(text, **kwargs)
     except BadRequest as e:
-        if "not modified" in str(e).lower():
-            pass
-        elif "can't parse" in str(e).lower():
-            await query.edit_message_text(text=text.replace("*", "").replace("`", "").replace("_", " "), 
-                                          reply_markup=reply_markup)
+        if "Message is not modified" not in str(e): raise e
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    user_id = user.id
-    username = user.username or ""
-    first_name = user.first_name or ""
-    
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute("INSERT OR IGNORE INTO users (user_id, username, first_name, joined_at, tz_offset) VALUES (?, ?, ?, ?, 0)",
-              (user_id, username, first_name, datetime.now(timezone.utc).isoformat()))
-    conn.commit()
-    conn.close()
-    
-    await update.message.reply_text(
-        f"🎯 *Welcome, {esc(first_name)}!*\n\n"
-        f"🤖 *CYBERX Virtual Number Bot v3.0*\n\n"
-        f"Get *REAL* disposable phone numbers and receive SMS/OTP codes.\n"
-        f"Numbers are scraped live from free SMS services.\n\n"
-        f"📌 *Commands:*\n"
-        f"`/getnumber` — Get a virtual number\n"
-        f"`/mynumbers` — Your active numbers\n"
-        f"`/settz +/-HH` — Set your timezone (e.g., `/settz -5` for EST)\n"
-        f"`/help` — Help\n\n"
-        f"🌍 *{len(COUNTRIES)} countries available*\n"
-        f"⚡ Inbox checked LIVE on button press\n"
-        f"🔄 Background poll every 30s\n\n"
-        f"⚠️ *For educational use only*",
-        reply_markup=build_main_keyboard(),
-        parse_mode="Markdown"
-    )
+    conn = sqlite3.connect(DB_FILE); c = conn.cursor()
+    c.execute("INSERT OR IGNORE INTO users (user_id, username, first_name, joined_at) VALUES (?,?,?,?)",
+              (user.id, user.username or "", user.first_name or "", datetime.now().isoformat()))
+    conn.commit(); conn.close()
 
-async def settz_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Set user's timezone offset."""
-    user_id = update.effective_user.id
-    args = context.args
-    
-    if not args:
-        current = get_user_tz_offset(user_id)
-        sign = '+' if current >= 0 else ''
-        await update.message.reply_text(
-            f"🕐 *Your current timezone:* UTC{sign}{current}\n\n"
-            f"To change it, use `/settz +/-HH`\n"
-            f"Examples:\n"
-            f"`/settz -5` → Eastern US (EST)\n"
-            f"`/settz +1` → Central Europe (CET)\n"
-            f"`/settz +5:30` → India (IST)\n"
-            f"`/settz 0` → UTC",
-            parse_mode="Markdown"
-        )
-        return
-    
-    try:
-        tz_str = args[0].strip()
-        # Parse offset like "-5", "+1", "+5:30", "0"
-        if ':' in tz_str:
-            parts = tz_str.split(':')
-            offset = int(parts[0]) + int(parts[1]) / 60
-        else:
-            offset = float(tz_str)
-        
-        if offset < -12 or offset > 14:
-            await update.message.reply_text("❌ Invalid offset. Must be between -12 and +14.")
-            return
-        
-        set_user_tz_offset(user_id, offset)
-        sign = '+' if offset >= 0 else ''
-        await update.message.reply_text(
-            f"✅ *Timezone set to UTC{sign}{offset}*\n"
-            f"All times will now show in your local time.",
-            parse_mode="Markdown"
-        )
-    except ValueError:
-        await update.message.reply_text("❌ Invalid format. Use `/settz -5` or `/settz +1`", parse_mode="Markdown")
+    await update.message.reply_text(
+        f"🌍 **Welcome {user.first_name}!**\n\n"
+        f"📱 **CYBERX Virtual Number Bot**\n"
+        f"🌍 **{len(COUNTRIES)} countries** worldwide\n\n"
+        f"**How to get real OTPs:**\n"
+        f"1️⃣ Get a number from the bot\n"
+        f"2️⃣ Use it on any service\n"
+        f"3️⃣ OTPs appear in **Inbox** automatically!\n\n"
+        f"🔒 **OTP Lock:** 10 numbers fired at once → first OTP wins\n"
+        f"🌐 FREE OTPs: Shelex auto-polling\n"
+        f"📡 REAL OTPs: Twilio webhook\n"
+        f"☁️ Hosted on Render · Port 10000 · URL: {RENDER_URL}\n\n"
+        f"_For educational purposes only_",
+        parse_mode="Markdown",
+        reply_markup=build_main_keyboard()
+    )
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    user_id = update.effective_user.id
     data = query.data
-    
+    user_id = update.effective_user.id
+
     if data == "main_menu":
-        await safe_edit(query, "🏠 *Main Menu*", reply_markup=build_main_keyboard())
-    
-    elif data == "getnumber":
+        await safe_edit(query, "🏠 **Main Menu**", parse_mode="Markdown", reply_markup=build_main_keyboard())
+
+    elif data == "get_number":
         keyboard, tp = get_country_keyboard(0)
-        await safe_edit(query, f"🌍 *Select Country* ({len(COUNTRIES)} countries available)", 
-                       reply_markup=keyboard)
-    
+        await safe_edit(query, f"🌍 **Select Country** ({len(COUNTRIES)} available)\nPage 1 of {tp}",
+                       parse_mode="Markdown", reply_markup=keyboard)
+
     elif data.startswith("cntrypage_"):
-        page = int(data.split("_")[1])
-        keyboard, tp = get_country_keyboard(page)
-        await safe_edit(query, f"🌍 *Select Country* — Page {page+1}/{tp}", 
-                       reply_markup=keyboard)
-    
+        page = int(data.split("_")[1]); keyboard, tp = get_country_keyboard(page)
+        await safe_edit(query, f"🌍 **Select Country** — Page {page+1} of {tp}",
+                       parse_mode="Markdown", reply_markup=keyboard)
+
     elif data.startswith("selcntry_"):
         idx = int(data.split("_")[1])
-        name, flag, dial, fmt = COUNTRIES[idx]
-        
-        await safe_edit(query, f"⏳ Getting a real disposable number for {flag} {name}...")
-        
-        # Get a REAL disposable number (NOT a fake generated one)
-        phone, display = get_real_number_for_country(name, flag, dial)
-        num_id = save_number_to_db(user_id, name, flag, dial, phone, display)
-        save_otp_message(num_id, phone, "SYSTEM", "", f"Number {phone} activated", "", "SYSTEM", 
-                        datetime.now(timezone.utc).isoformat())
-        
-        await safe_edit(query, 
-            f"✅ *Number Generated!*\n\n"
-            f"{flag} *{name}*\n"
-            f"📞 `{phone}`\n\n"
-            f"*How to use:*\n"
-            f"1️⃣ Enter `{phone}` on any service (WhatsApp, TikTok, etc.)\n"
-            f"2️⃣ Tap *\"Check Inbox NOW\"* to instantly scan for OTP codes\n"
-            f"3️⃣ Bot also auto-checks every 30s in background\n\n"
-            f"⏱️ Active until you release it",
-            reply_markup=build_number_detail_keyboard(num_id, phone))
-    
-    elif data.startswith("viewmsgs_"):
-        nid = int(data.split("_")[1])
-        
-        await safe_edit(query, "🔍 *Scanning inbox LIVE...*\nFetching latest messages from freetext.live...")
-        
-        # Get number info from DB
-        conn = sqlite3.connect(DB_FILE)
-        c = conn.cursor()
-        c.execute("SELECT phone_number, country_flag, country_name FROM assigned_numbers WHERE id=? AND user_id=?", 
-                  (nid, user_id))
-        row = c.fetchone()
-        conn.close()
-        
-        if not row:
-            await safe_edit(query, "❌ Number not found.", reply_markup=build_main_keyboard())
-            return
-        
-        phone_number, country_flag, country_name = row
-        local_num = phone_number.replace("+", "").replace("-", "").replace(" ", "")
-        
-        # LIVE SCRAPE the inbox RIGHT NOW
-        scraped_msgs = scrape_inbox_live(local_num)
-        
-        # Also get previously saved messages from DB
-        db_msgs = get_number_messages(nid)
-        
-        tz = get_user_tz_offset(user_id)
-        
-        if not scraped_msgs and not db_msgs:
+        if idx < len(COUNTRIES):
+            name, flag, dial_code, fmt = COUNTRIES[idx]
+            phone, display = generate_number_for_country(COUNTRIES[idx])
+            num_id = save_number_to_db(user_id, name, flag, dial_code, phone, display)
+            save_otp_message(num_id, phone, name, "SYSTEM", f"✅ Number activated!", "", "SYSTEM", "system")
+            shelex = "✅" if COUNTRY_TO_SHELEX.get(name) else "❌"
+
+            # 👥 "Registered by another user" indicator
+            services = check_service_registration(phone, COUNTRY_TO_SHELEX.get(name))
+            service_info = ""
+            if services:
+                svc_lines = "\n".join(f"   • {s}" for s in services[:5])
+                service_info = (f"\n\n👥 **⚠️ This number is registered by another user on:**\n"
+                                f"{svc_lines}\n"
+                                f"_Old public messages found — someone used it before_")
+            elif COUNTRY_TO_SHELEX.get(name):
+                service_info = "\n\n✅ _Number is fresh — no previous app registration found_"
+
             await safe_edit(query,
-                f"📭 *No messages yet for*\n{country_flag} {country_name}: `{phone_number}`\n\n"
-                f"Try:\n"
-                f"1. Enter this number on the app you want to verify\n"
-                f"2. Request the OTP code\n"
-                f"3. Tap \"Check Inbox NOW\" again\n\n"
-                f"Bot also auto-checks every 30 seconds.",
-                reply_markup=build_number_detail_keyboard(nid, phone_number))
-            return
-        
-        # Build message display
-        text = f"📬 *Inbox — {country_flag} {country_name}*\n📞 `{phone_number}`\n\n"
-        
-        # First show LIVE scraped messages (most recent first)
-        if scraped_msgs:
-            text += f"━━━ *LIVE RESULTS* ━━━\n"
-            for msg in scraped_msgs[:15]:
-                local_time = format_time_12hr(msg['time_iso'], tz)
-                otp_badge = f"🔑 `{msg['otp']}` │ " if msg['otp'] else ""
-                text += (
-                    f"▸ {otb_badge}*{msg['service']}*\n"
-                    f"  From: {msg['sender']}\n"
-                    f"  🕐 {local_time}\n"
-                    f"  `{esc(msg['text'][:80])}`\n\n"
-                )
-            
-            # Save live messages to DB
-            conn = sqlite3.connect(DB_FILE)
-            c = conn.cursor()
-            for msg in scraped_msgs:
-                c.execute("SELECT COUNT(*) FROM messages WHERE number_id=? AND message_text=?",
-                         (nid, msg['text'][:200]))
-                if c.fetchone()[0] == 0:
-                    c.execute("""
-                        INSERT INTO messages (number_id, phone_number, service, otp_code, message_text, sender, source, received_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                    """, (nid, phone_number, msg['service'], msg['otp'], msg['text'][:500],
-                          msg['sender'], "live_check", msg['time_iso']))
-            conn.commit()
-            conn.close()
-        
-        # Also show older DB messages if we have fewer than 10 live ones
-        if len(scraped_msgs) < 10 and db_msgs:
-            # Filter out duplicates with live results
-            live_texts = set(m['text'][:200] for m in scraped_msgs)
-            older_count = 0
-            for svc, otp, msg_text, sender, source, ts in db_msgs:
-                if older_count >= 5:
-                    break
-                if msg_text[:200] in live_texts:
-                    continue
-                if source == "live_check":
-                    continue  # Already shown above
-                if older_count == 0:
-                    text += f"\n━━━ *EARLIER MESSAGES* ━━━\n"
-                if msg_text.startswith("Number ") and "activated" in msg_text:
-                    continue  # Skip activation message
-                local_time = format_time_12hr(ts, tz)
-                otp_badge = f"🔑 `{otp}` │ " if otp else ""
-                text += f"▸ {otp_badge}{svc}\n  🕐 {local_time}\n  `{esc(msg_text[:80])}`\n\n"
-                older_count += 1
-        
-        total = get_number_messages_count(nid)
-        text += f"━━━\n📊 Total: {total} messages | 🔍 Live scan: {len(scraped_msgs)} new"
-        
-        await safe_edit(query, text, reply_markup=build_number_detail_keyboard(nid, phone_number))
-    
-    elif data.startswith("release_"):
-        nid = int(data.split("_")[1])
-        if release_number(nid, user_id):
-            await safe_edit(query, "✅ *Number released!*\nIt's no longer being monitored.", 
-                          reply_markup=build_main_keyboard())
-        else:
-            await safe_edit(query, "❌ Failed to release number", reply_markup=build_main_keyboard())
-    
-    elif data == "mynumbers":
+                f"✅ **Number Generated!**\n\n🌍 {flag} **{name}**\n📞 `{phone}`\n📋 {display}\n🆔 ID: `{num_id}`\n\n📶 Shelex: {shelex}\n{service_info}\n\nUse `{phone}` on any service → OTPs in Inbox!",
+                parse_mode="Markdown", reply_markup=build_number_detail_keyboard(num_id))
+
+    elif data == "my_numbers":
         nums = get_user_numbers(user_id)
         if not nums:
-            await safe_edit(query, "📭 *No numbers yet.*\nTap \"Get Number\" below!", 
-                          reply_markup=build_main_keyboard())
+            await safe_edit(query, "📭 **No active numbers**\nPress 📱 **Get Number** or 🔒 **OTP Lock**!",
+                           parse_mode="Markdown", reply_markup=build_main_keyboard())
             return
-        text = "📋 *Your Numbers:*\n\n"
-        for nid, flag, name, phone, disp, assigned, status in nums:
-            status_icon = "✅ Active" if status == "active" else "❌ Released"
-            # Format time from assigned
-            try:
-                dt = datetime.fromisoformat(assigned.replace('Z', '+00:00'))
-                tz = get_user_tz_offset(user_id)
-                local_time = format_time_12hr(assigned, tz)
-            except:
-                local_time = assigned
-            text += f"{flag} *{name}*\n📞 `{phone}`\nStatus: {status_icon}\n🕐 {local_time}\n\n"
-        await safe_edit(query, text, reply_markup=build_main_keyboard())
-    
-    elif data == "stats":
-        conn = sqlite3.connect(DB_FILE)
-        c = conn.cursor()
-        c.execute("SELECT COUNT(*) FROM users")
-        users = c.fetchone()[0]
-        c.execute("SELECT COUNT(*) FROM assigned_numbers WHERE status='active'")
-        active = c.fetchone()[0]
-        c.execute("SELECT COUNT(*) FROM assigned_numbers")
-        total_nums = c.fetchone()[0]
-        c.execute("SELECT COUNT(*) FROM messages")
-        total_msgs = c.fetchone()[0]
+        keyboard = []
+        for n in nums[:10]:
+            nid, country, flag, dial, phone, display, created, locked = n
+            badge = "🔒 " if locked else ""
+            mc = get_number_messages_count(nid)
+            keyboard.append([InlineKeyboardButton(f"{flag} {badge}{country}: {display} (📩{mc})", callback_data=f"view_number_{nid}")])
+        keyboard.append([InlineKeyboardButton("🔙 Main Menu", callback_data="main_menu")])
+        await safe_edit(query, f"📋 **Your Numbers ({len(nums)} total)**", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+
+    elif data.startswith("view_number_"):
+        nid = int(data.split("_")[2])
+        conn = sqlite3.connect(DB_FILE); c = conn.cursor()
+        c.execute("SELECT country, flag, phone_number, full_display, created_at, locked FROM assigned_numbers WHERE id=? AND user_id=?", (nid, user_id))
+        row = c.fetchone(); conn.close()
+        if not row: await safe_edit(query, "❌ Not found", reply_markup=build_main_keyboard()); return
+        country, flag, phone, display, created, locked = row
+        badge = "🔒 " if locked else ""
+        mc = get_number_messages_count(nid)
+        await safe_edit(query, f"📱 {flag} **{badge}{country}**\n📞 `{phone}`\n📋 {display}\n📩 {mc} messages", parse_mode="Markdown", reply_markup=build_number_detail_keyboard(nid))
+
+    elif data.startswith("inbox_"):
+        nid = int(data.split("_")[1])
+        conn = sqlite3.connect(DB_FILE); c = conn.cursor()
+        c.execute("SELECT country, flag, phone_number, full_display FROM assigned_numbers WHERE id=? AND user_id=?", (nid, user_id))
+        row = c.fetchone()
+        if not row: conn.close(); await safe_edit(query, "❌ Not found", reply_markup=build_main_keyboard()); return
+        country, flag, phone, display = row
+        msgs = get_number_messages(nid, 15); has_real = any(m[1]!="SYSTEM" for m in msgs) if msgs else False
+        if not has_real:
+            conn.close()
+            await safe_edit(query, f"📥 **Inbox — {flag} {country}**\n📞 `{phone}`\n\n📭 No OTPs yet\n\n1️⃣ Use `{phone}` on any service\n2️⃣ Request verification\n3️⃣ Check back in ~30s!", parse_mode="Markdown", reply_markup=build_number_detail_keyboard(nid))
+            return
+        text = f"📥 **Inbox — {flag} {country}**\n📞 `{phone}`\n\n"; count = 0
+        for m in msgs:
+            if m[1]=="SYSTEM": continue
+            if count>=10: break
+            mid, sender, msg_text, otp, service, source, recv = m; ts = recv[-8:] if recv else ""
+            icon = "🔒" if source=="otp_lock" else "🌐" if source=="shelex_free" else "📡" if source=="twilio" else "💉"
+            if otp: text += f"{icon} **OTP:** `{otp}` | 🏷️ {service}\n   🕐 {ts}\n\n"
+            else: text += f"💬 {msg_text[:60]}...\n   🕐 {ts}\n\n"; count+=1
+        text += f"_Showing {count} of {get_number_messages_count(nid)}_"
         conn.close()
-        
+        await safe_edit(query, text, parse_mode="Markdown", reply_markup=build_number_detail_keyboard(nid))
+
+    elif data.startswith("release_"):
+        nid = int(data.split("_")[1])
+        if release_number(nid, user_id): await safe_edit(query, "✅ **Released!**", parse_mode="Markdown", reply_markup=build_main_keyboard())
+        else: await safe_edit(query, "❌ Failed", reply_markup=build_main_keyboard())
+
+    elif data == "stats":
+        conn = sqlite3.connect(DB_FILE); c = conn.cursor()
+        c.execute("SELECT COUNT(*) FROM users"); users = c.fetchone()[0]
+        c.execute("SELECT COUNT(*) FROM assigned_numbers WHERE status='active'"); active = c.fetchone()[0]
+        c.execute("SELECT COUNT(*) FROM assigned_numbers"); total_nums = c.fetchone()[0]
+        c.execute("SELECT COUNT(*) FROM messages"); total_msgs = c.fetchone()[0]
+        c.execute("SELECT COUNT(*) FROM messages WHERE source='shelex_free'"); shelex = c.fetchone()[0]
+        c.execute("SELECT COUNT(*) FROM messages WHERE source='twilio'"); twilio = c.fetchone()[0]
+        c.execute("SELECT COUNT(*) FROM messages WHERE source='otp_lock'"); locked_otps = c.fetchone()[0]
+        conn.close()
         await safe_edit(query,
-            f"📊 *Statistics*\n\n"
-            f"👥 Users: {users}\n"
-            f"📱 Numbers: {total_nums} total, {active} active\n"
-            f"💬 Messages: {total_msgs}\n"
-            f"🌍 Countries: {len(COUNTRIES)}\n\n"
-            f"🔍 Live inbox scraping from freetext.live\n"
-            f"⚡ Instant check on button press",
-            reply_markup=build_main_keyboard())
-    
+            f"📊 **Statistics**\n\n"
+            f"👥 Users: {users}\n📱 Numbers: {total_nums} total, {active} active\n📩 Messages: {total_msgs}\n"
+            f"🌐 Shelex: {shelex} | 📡 Twilio: {twilio} | 🔒 OTP Lock: {locked_otps}\n"
+            f"🌍 Countries: {len(COUNTRIES)}\n"
+            f"☁️ Hosted on Render (free)\n"
+            f"🌐 URL: {RENDER_URL}\n"
+            f"🔌 Port: 10000",
+            parse_mode="Markdown", reply_markup=build_main_keyboard())
+
+    elif data == "render_info":
+        await safe_edit(query,
+            f"**💻 Render Server Info**\n\n"
+            f"**Your Render URL:**\n`{RENDER_URL}`\n\n"
+            f"**Health endpoint:**\n`{RENDER_URL}/health`\n\n"
+            f"**Twilio webhook (paste this):**\n`{RENDER_URL}/twilio-sms`\n\n"
+            f"**Auto-ping:** Every 4 minutes → keeps Render awake\n"
+            f"**Port:** 10000\n"
+            f"**Database:** SQLite (persistent on Render disk)\n"
+            f"**FREE OTPs:** Shelex sources (every 30s)\n"
+            f"**🔒 OTP Lock:** 10 numbers, first OTP wins\n"
+            f"**Countries:** {len(COUNTRIES)}\n\n"
+            f"**No tunnels, no domains, no bullshit.**",
+            parse_mode="Markdown", reply_markup=build_main_keyboard())
+
     elif data == "how_otp":
         await safe_edit(query,
-            "❓ *How OTP Reception Works*\n\n"
-            "📡 *Live Scraper Mode (CURRENT)*\n"
-            "• Bot scrapes real disposable numbers from free SMS sites\n"
-            "• When you tap \"Check Inbox\" → *LIVE HTTP request* to the inbox page\n"
-            "• Real OTPs from TikTok, Apple, Facebook, Steam, etc.\n"
-            "• Background poll also runs every 30 seconds\n"
-            "⚠️ Numbers are public — OTPs visible to others\n\n"
-            "📡 *Twilio Mode (Optional — PRIVATE)*\n"
-            "1. Sign up at twilio.com ($20 free credit)\n"
-            "2. Buy a phone number (~$1)\n"
+            "**📖 How Real OTP Reception Works**\n\n"
+            "**🟢 Free Mode (Shelex)**\n"
+            "Bot polls free public SMS websites every 30s.\n"
+            "✅ Free  ⚠️ Numbers are public — OTPs visible to others\n\n"
+            "**🔒 OTP Lock Mode**\n"
+            "10 fallback numbers fired at once.\n"
+            "First OTP found → auto-extracted → pushed instantly.\n"
+            "Best free odds. Not 100% — public numbers are busy.\n\n"
+            "**🔵 Real Mode (Twilio)**\n"
+            "1. twilio.com ($20 free credit)\n"
+            "2. Buy a number (~$1)\n"
             "3. Set webhook to:\n"
-            "   `{render_url}/twilio-sms`\n"
-            "4. All SMS forwarded to bot instantly!\n\n"
-            "🕐 *Timezone:* Use `/settz +/-HH` to set your local time\n\n"
-            "⚠️ *For educational use only*",
-            reply_markup=build_main_keyboard())
+            f"   `{RENDER_URL}/twilio-sms`\n"
+            "4. All SMS forward to your bot instantly!\n"
+            "✅ Private, instant, works with any service\n\n"
+            "**🟡 SIM Mode (Gammu)**\n"
+            "Physical SIM + USB modem → forwarded to bot\n\n"
+            "_For education only_",
+            parse_mode="Markdown", reply_markup=build_main_keyboard())
+
+    elif data == "noop": pass
 
 async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     user_id = update.effective_user.id
-    
-    if text in ("/getnumber", "\U0001f4f1 Get Number"):
+
+    if text in ["/getnumber", "📱 Get Number"]:
         keyboard, tp = get_country_keyboard(0)
-        await update.message.reply_text(f"🌍 *Select Country* ({len(COUNTRIES)} countries)", 
-                                       reply_markup=keyboard, parse_mode="Markdown")
+        await update.message.reply_text(f"🌍 **Select Country** ({len(COUNTRIES)} countries)", parse_mode="Markdown", reply_markup=keyboard)
         return
-    
-    # Search countries by name or dial code
+
     matching = [(i, c) for i, c in enumerate(COUNTRIES) if text.lower() in c[0].lower()]
-    if not matching:
-        matching = [(i, c) for i, c in enumerate(COUNTRIES) if text in c[2]]
-    
+    if not matching: matching = [(i, c) for i, c in enumerate(COUNTRIES) if text in c[2]]
+
     if matching:
         if len(matching) == 1:
-            idx, cd = matching[0]
-            name, flag, dial, fmt = cd
-            
-            # Get a REAL disposable number
-            phone, display = get_real_number_for_country(name, flag, dial)
+            idx, cd = matching[0]; name, flag, dial, fmt = cd
+            phone, display = generate_number_for_country(cd)
             num_id = save_number_to_db(user_id, name, flag, dial, phone, display)
-            save_otp_message(num_id, phone, "SYSTEM", "", f"Number {phone} activated", "", "SYSTEM",
-                            datetime.now(timezone.utc).isoformat())
-            
-            await update.message.reply_text(
-                f"✅ *Number Generated!*\n\n{flag} *{name}*\n📞 `{phone}`\n\n"
-                f"1️⃣ Enter `{phone}` on the service you want to verify\n"
-                f"2️⃣ Request the OTP code\n"
-                f"3️⃣ Tap \"Check Inbox NOW\" to see it instantly!\n\n"
-                f"Bot also auto-checks every 30s.",
-                reply_markup=build_number_detail_keyboard(num_id, phone),
-                parse_mode="Markdown"
-            )
+            save_otp_message(num_id, phone, name, "SYSTEM", "✅ Activated!", "", "SYSTEM", "system")
+
+            services = check_service_registration(phone, COUNTRY_TO_SHELEX.get(name))
+            svc_info = ""
+            if services:
+                svc_info = f"\n\n👥 **⚠️ Registered by another user on:** {', '.join(services[:3])}"
+            elif COUNTRY_TO_SHELEX.get(name):
+                svc_info = "\n\n✅ _Fresh number — no previous registration found_"
+
+            await update.message.reply_text(f"✅ **{flag} {name}**\n📞 `{phone}`\n📋 {display}{svc_info}", parse_mode="Markdown", reply_markup=build_number_detail_keyboard(num_id))
             return
         elif len(matching) <= 12:
             kb = []
-            for idx, c in matching:
-                kb.append([InlineKeyboardButton(f"{c[1]} {c[0]} ({c[2]})", callback_data=f"selcntry_{idx}")])
+            for idx, c in matching: kb.append([InlineKeyboardButton(f"{c[1]} {c[0]} ({c[2]})", callback_data=f"selcntry_{idx}")])
             kb.append([InlineKeyboardButton("🔙 Cancel", callback_data="main_menu")])
-            await update.message.reply_text(f"📌 *{len(matching)} matches:*", 
-                                           reply_markup=InlineKeyboardMarkup(kb),
-                                           parse_mode="Markdown")
+            await update.message.reply_text(f"🔍 {len(matching)} matches:", reply_markup=InlineKeyboardMarkup(kb))
             return
-    
-    await update.message.reply_text("Type a country name or use the buttons below!", 
-                                   reply_markup=build_main_keyboard())
+    await update.message.reply_text("Type a country name, press buttons, or use /lock for OTP Lock!", reply_markup=build_main_keyboard())
+
+async def seturl_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin: /seturl https://yourapp.onrender.com"""
+    if update.effective_user.id != ADMIN_ID: return
+    if not context.args:
+        await update.message.reply_text(f"Usage: `/seturl {RENDER_URL}`", parse_mode="Markdown")
+        return
+    url = context.args[0].strip().rstrip('/')
+    conn = sqlite3.connect(DB_FILE); c = conn.cursor()
+    c.execute("INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)", ("render_url", url))
+    conn.commit(); conn.close()
+    os.environ["RENDER_EXTERNAL_URL"] = url
+    await update.message.reply_text(f"✅ Render URL set to:\n`{url}`\n\nTwilio webhook: `{url}/twilio-sms`\nHealth: `{url}/health`", parse_mode="Markdown")
+
+async def inject_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID: return
+    if len(context.args) < 3: return
+    try:
+        nid = int(context.args[0]); service = context.args[1].upper(); code = context.args[2]
+        conn = sqlite3.connect(DB_FILE); c = conn.cursor()
+        c.execute("SELECT id, user_id, phone_number, country FROM assigned_numbers WHERE id=? AND status='active'", (nid,))
+        row = c.fetchone(); conn.close()
+        if not row: return
+        num_id, owner_id, phone, country = row
+        save_otp_message(num_id, phone, country, service, f"Your {service} code: {code}", code, service, "manual_inject")
+        await update.message.reply_text(f"✅ **Injected!**\n📞 `{phone}`\n🏷️ {service}\n🔑 `{code}`", parse_mode="Markdown")
+    except: pass
+
+async def mynumbers_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    nums = get_user_numbers(user_id)
+    if not nums:
+        await update.message.reply_text("📭 **No active numbers**\nUse 🔒 **OTP Lock** or 📱 **Get Number**!", parse_mode="Markdown", reply_markup=build_main_keyboard())
+        return
+    keyboard = []
+    for n in nums[:10]:
+        nid, country, flag, dial, phone, display, created, locked = n
+        badge = "🔒 " if locked else ""
+        mc = get_number_messages_count(nid)
+        keyboard.append([InlineKeyboardButton(f"{flag} {badge}{country}: {display} (📩{mc})", callback_data=f"view_number_{nid}")])
+    keyboard.append([InlineKeyboardButton("🔙 Main Menu", callback_data="main_menu")])
+    await update.message.reply_text(f"📋 **Your Numbers ({len(nums)} total)**", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "🤖 *CYBERX Bot v3.0 — Help*\n\n"
-        "📌 *Commands:*\n"
-        "`/start` — Start the bot\n"
-        "`/getnumber` — Get a virtual number\n"
-        "`/mynumbers` — View your numbers\n"
-        "`/settz +/-HH` — Set your timezone\n"
+        "**📱 CYBERX Bot — Help**\n\n"
+        "**Commands:**\n"
+        "`/start` — Start bot\n"
+        "`/lock` — 🔒 OTP Lock: fire 10 numbers, first OTP wins\n"
+        "`/getnumber` — Get a number\n"
+        "`/mynumbers` — Your numbers\n"
+        "`/seturl URL` — (Admin) Set Render URL\n"
+        "`/inject ID SERVICE CODE` — (Admin) Test OTP\n"
         "`/help` — This help\n\n"
-        "🔍 *How to Use:*\n"
-        "1. Select a country\n"
-        "2. Bot gives you a REAL disposable number\n"
-        "3. Enter that number on any app (WhatsApp, TikTok, etc.)\n"
-        "4. Tap \"Check Inbox NOW\" to instantly scan for OTPs\n"
-        "5. Bot also auto-checks every 30 seconds\n\n"
-        "🕐 *Timezone:* Use `/settz -5` for EST, `/settz +1` for CET, etc.\n\n"
-        f"🌍 {len(COUNTRIES)} countries available\n"
-        "⚡ Live inbox scraping — real OTPs in seconds",
+        "**OTP Sources:**\n"
+        "🔒 OTP Lock: 10 fallback numbers, auto-push\n"
+        "🌐 Shelex (free): polls every 30s\n"
+        "📡 Twilio (real): via webhook URL\n\n"
+        "**Hosted on Render — always online**\n"
+        "Auto-ping every 4 min → never sleeps\n"
+        f"URL: {RENDER_URL} · Port: 10000 · {len(COUNTRIES)} countries",
         parse_mode="Markdown"
     )
 
@@ -1244,59 +1033,65 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ================================================================
 
 def main():
-    RENDER_URL = os.environ.get("RENDER_EXTERNAL_URL", "https://cyberx_otp.onrender.com")
-    
-    print("="*60)
-    print("  📱 CYBERX VIRTUAL NUMBER BOT v3.0")
-    print(f"  🌍 {len(COUNTRIES)} countries  ⚡ Live inbox scraping")
-    print(f"  🕐 12-hour time  /settz for your timezone")
-    print(f"  🔗 {RENDER_URL}")
-    print("="*60)
+    print("="*55)
+    print("  📱 CYBERX VIRTUAL NUMBER BOT — RENDER EDITION")
+    print(f"  ✅ {len(COUNTRIES)} countries  ✅ Port 10000  ✅ 4min ping")
+    print(f"  ✅ OTP Lock: {LOCK_POOL_SIZE} numbers, first OTP wins")
+    print(f"  ✅ {RENDER_URL}")
+    print("="*55)
 
     init_db()
 
-    if not BOT_TOKEN:
-        print("\n[!] ERROR: BOT_TOKEN environment variable is missing!")
+    if BOT_TOKEN == "YOUR_BOT_TOKEN":
+        print("\n[!] ERROR: Set your BOT_TOKEN in skybot.py!")
         sys.exit(1)
 
-    # Start Flask
+    # Start Flask (webhook + health) on PORT 10000
     flask_thread = threading.Thread(target=start_flask, daemon=True)
     flask_thread.start()
-    print("[OK] Flask running on port 10000")
+    print("[✓] Flask running on port 10000")
 
-    # Start health ping
+    # Health ping every 4 minutes — keeps Render awake
     ping_thread = threading.Thread(target=health_ping, daemon=True)
     ping_thread.start()
-    print("[OK] Health ping every 4 minutes")
+    print("[✓] Health ping every 4 minutes")
 
-    # Build Telegram app
+    # Telegram bot
     app = Application.builder().token(BOT_TOKEN).build()
-
-    # Add handlers
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("lock", lock_command))
+    app.add_handler(CommandHandler("getnumber", text_handler))
+    app.add_handler(CommandHandler("mynumbers", mynumbers_command))
+    app.add_handler(CommandHandler("inject", inject_command))
+    app.add_handler(CommandHandler("seturl", seturl_command))
     app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(CommandHandler("settz", settz_command))
+    # ⚠️ lock_callback MUST be registered BEFORE button_handler
+    app.add_handler(CallbackQueryHandler(lock_callback, pattern="^lock_"))
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
 
-    # Start background inbox poller
-    poller_loop = asyncio.new_event_loop()
-    poller_thread = threading.Thread(target=poll_real_inboxes, args=(app, poller_loop), daemon=True)
-    poller_thread.start()
-    print("[OK] Background inbox poller started (30s interval)")
+    # Shelex polling
+    loop = asyncio.get_event_loop()
+    shelex_thread = threading.Thread(target=shelex_poll_numbers, args=(app, loop), daemon=True)
+    shelex_thread.start()
+    print("[✓] Shelex polling every 30s")
 
-    print(f"[OK] Bot ready! {len(COUNTRIES)} countries.")
-    print(f"[OK] Twilio webhook: {RENDER_URL}/twilio-sms")
-    print(f"[OK] Use /settz to set your timezone")
+    # OTP Lock watcher — 10 numbers, first OTP wins
+    lock_thread = threading.Thread(target=lock_poll_thread, args=(app, loop), daemon=True)
+    lock_thread.start()
+    print(f"[✓] OTP Lock pool: {LOCK_POOL_SIZE} numbers, {LOCK_POLL_SECONDS}s cycle")
 
-    # Run polling
+    print(f"[✓] Bot running! {len(COUNTRIES)} countries.")
+    print(f"[✓] Twilio webhook: {RENDER_URL}/twilio-sms")
+    print(f"[✓] Health: {RENDER_URL}/health")
+    print("[✓] Press Ctrl+C to stop.\n")
+
     try:
-        app.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
+        app.run_polling(allowed_updates=Update.ALL_TYPES)
     except KeyboardInterrupt:
         print("\n[!] Shutting down...")
     except Exception as e:
         print(f"\n[!] Error: {e}")
-        traceback.print_exc()
 
 if __name__ == "__main__":
     main()
